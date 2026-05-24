@@ -451,31 +451,45 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
     setLoading(true);
     await new Promise(r => setTimeout(r, 600));
     setLoading(false);
-    const adminMatch = ADMINS.find(a => a.email.toLowerCase() === email.toLowerCase().trim());
+    const e = email.toLowerCase().trim();
+    const adminMatch = ADMINS.find(a => a.email.toLowerCase() === e);
     if (adminMatch) {
       onSignIn({ name: adminMatch.name, email: adminMatch.email, source: 'password', role: 'admin' });
       return;
     }
-    const volMatch = VOLUNTEERS.find(v => v.email.toLowerCase() === email.toLowerCase().trim());
+    const volMatch = VOLUNTEERS.find(v => v.email.toLowerCase() === e);
     if (volMatch) {
       onSignIn({ name: volMatch.name, email: volMatch.email, source: 'password', role: 'volunteer' });
       return;
     }
-    setErr('No account found. Try sgoldberg@gmail.com (volunteer) or rabbi@tbe.org (admin), or continue as guest.');
+    setErr('No account found for that email. Continue as guest to sign up anyway.');
   };
 
+  const nameFromEmail = (e: string) =>
+    e.split('@')[0].split(/[._-]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
   const tryGoogle = async () => {
-    setErr(''); setLoading(true);
-    await new Promise(r => setTimeout(r, 700));
+    setErr('');
+    if (!email.trim()) {
+      setErr('Enter your email address above first.');
+      return;
+    }
+    setLoading(true);
+    await new Promise(r => setTimeout(r, 800));
     setLoading(false);
-    const adminMatch = email && ADMINS.find(a => a.email.toLowerCase() === email.toLowerCase().trim());
-    const volMatch   = email && VOLUNTEERS.find(v => v.email.toLowerCase() === email.toLowerCase().trim());
-    const chosen = adminMatch
-      ? { ...adminMatch, role: 'admin' as const }
-      : volMatch
-        ? { ...volMatch, role: 'volunteer' as const }
-        : { ...VOLUNTEERS[0], role: 'volunteer' as const };
-    onSignIn({ name: chosen.name, email: chosen.email, source: 'google', role: chosen.role });
+    const e = email.toLowerCase().trim();
+    const adminMatch = ADMINS.find(a => a.email.toLowerCase() === e);
+    if (adminMatch) {
+      onSignIn({ name: adminMatch.name, email: adminMatch.email, source: 'google', role: 'admin' });
+      return;
+    }
+    const volMatch = VOLUNTEERS.find(v => v.email.toLowerCase() === e);
+    if (volMatch) {
+      onSignIn({ name: volMatch.name, email: volMatch.email, source: 'google', role: 'volunteer' });
+      return;
+    }
+    // Unknown email — sign in as a new volunteer using their real name derived from email
+    onSignIn({ name: nameFromEmail(email.trim()), email: email.trim(), source: 'google', role: 'volunteer' });
   };
 
   const tryGuest = () => {
@@ -501,24 +515,22 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
 
           {tab === 'password' ? (
             <>
-              <button className="auth-google" onClick={tryGoogle} disabled={loading}>
-                <GoogleLogo />
-                {loading ? 'Connecting…' : 'Continue with Google'}
-              </button>
-              <div className="auth-divider">or</div>
               <div className="auth-field">
                 <label>Email</label>
                 <input type="email" autoComplete="email" value={email}
                        onChange={e => setEmail(e.target.value)} placeholder="you@email.com" />
               </div>
+              <button className="auth-google" onClick={tryGoogle} disabled={loading}>
+                <GoogleLogo />
+                {loading ? 'Connecting…' : 'Continue with Google'}
+              </button>
+              <div className="auth-divider">or sign in with password</div>
               <div className="auth-field">
                 <label>Password</label>
                 <input type="password" autoComplete="current-password" value={password}
                        onChange={e => setPassword(e.target.value)} placeholder="••••••••"
                        onKeyDown={e => e.key === 'Enter' && tryPassword()} />
-                <div className="hint">
-                  Demo: <code>sgoldberg@gmail.com</code> signs in as a volunteer · <code>rabbi@tbe.org</code> as admin. Any password works.
-                </div>
+                <div className="hint">Any password works for registered members.</div>
               </div>
               {err && <div className="auth-err">{err}</div>}
             </>
