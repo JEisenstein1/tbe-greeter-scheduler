@@ -1,0 +1,339 @@
+import { useState, useEffect } from 'react';
+import type { Service, User, ViewId, AdminSubId, AssignTarget, SignupTarget, EventEditState, TweakValues } from './types';
+import { INITIAL_SERVICES } from './data';
+import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakToggle } from './TweaksPanel';
+import { Topbar, BotNav, AssignModal, SignUpModal, ToastRail, AuthSheet, EventEditModal, ConfirmDialog } from './components';
+import {
+  AIView, CalendarView, SignUpView, MyDatesView,
+  AdminHubView, VolunteersView, AdminsView, CoverageView, EmailView, SettingsView,
+} from './views';
+
+const TWEAK_DEFAULTS: TweakValues = {
+  palette: 'navy-gold',
+  headingFont: 'Playfair Display',
+  density: 'regular',
+  defaultCalendarView: 'list',
+  hhAccents: true,
+  landing: 'ai',
+};
+
+const PALETTES: Record<string, { label: string; vars: Record<string, string> }> = {
+  'navy-gold': {
+    label: 'Navy & Gold',
+    vars: {
+      '--c-navy':      '#16263f',
+      '--c-navy-soft': '#2a3c5a',
+      '--c-gold':      '#b8893a',
+      '--c-gold-soft': '#d9b06a',
+      '--c-cream':     '#f6f1e7',
+      '--c-paper':     '#fbf8f1',
+    },
+  },
+  'olive-stone': {
+    label: 'Olive & Stone',
+    vars: {
+      '--c-navy':      '#3e4732',
+      '--c-navy-soft': '#5a6248',
+      '--c-gold':      '#9a7a3a',
+      '--c-gold-soft': '#c4a062',
+      '--c-cream':     '#f1ede4',
+      '--c-paper':     '#f8f5ee',
+    },
+  },
+  'burgundy-cream': {
+    label: 'Burgundy & Cream',
+    vars: {
+      '--c-navy':      '#5a2330',
+      '--c-navy-soft': '#73323f',
+      '--c-gold':      '#a8732e',
+      '--c-gold-soft': '#cc9e5b',
+      '--c-cream':     '#f5ece4',
+      '--c-paper':     '#fbf5ed',
+    },
+  },
+  'indigo-saffron': {
+    label: 'Indigo & Saffron',
+    vars: {
+      '--c-navy':      '#2a2a5a',
+      '--c-navy-soft': '#3f3f72',
+      '--c-gold':      '#c08a2e',
+      '--c-gold-soft': '#e0b66a',
+      '--c-cream':     '#f3eee2',
+      '--c-paper':     '#faf6eb',
+    },
+  },
+};
+
+const HEADING_FONTS = ['Playfair Display', 'Cormorant Garamond', 'Fraunces', 'DM Serif Display'];
+
+export default function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [view, setView] = useState<ViewId>(t.landing || 'ai');
+  const [adminSub, setAdminSub] = useState<AdminSubId | null>(null);
+  const [services, setServices] = useState<Service[]>(() => INITIAL_SERVICES);
+
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const raw = localStorage.getItem('tbe.user');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    if (user) localStorage.setItem('tbe.user', JSON.stringify(user));
+    else localStorage.removeItem('tbe.user');
+  }, [user]);
+  const [authOpen, setAuthOpen] = useState(false);
+
+  const [assignTarget, setAssignTarget] = useState<AssignTarget | null>(null);
+  const [signupTarget, setSignupTarget] = useState<SignupTarget | null>(null);
+  const [signupForm, setSignupForm] = useState({ name: '', email: '' });
+  const [eventEdit, setEventEdit] = useState<EventEditState | null>(null);
+  const [eventDelete, setEventDelete] = useState<Service | null>(null);
+  const [toasts, setToasts] = useState<{ id: string; msg: string }[]>([]);
+
+  useEffect(() => {
+    const adminOnly: ViewId[] = ['calendar', 'admin'];
+    if (adminOnly.includes(view) && user?.role !== 'admin') {
+      setView('ai');
+      setAdminSub(null);
+    }
+  }, [view, user?.role]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const p = PALETTES[t.palette] ?? PALETTES['navy-gold'];
+    Object.entries(p.vars).forEach(([k, v]) => root.style.setProperty(k, v));
+    root.style.setProperty('--font-serif', `"${t.headingFont}", Georgia, serif`);
+    root.dataset.density = t.density;
+    root.dataset.hhAccents = t.hhAccents ? 'on' : 'off';
+  }, [t.palette, t.headingFont, t.density, t.hhAccents]);
+
+  const pushToast = (msg: string) => {
+    const id = Math.random().toString(36).slice(2);
+    setToasts(ts => [...ts, { id, msg }]);
+    setTimeout(() => setToasts(ts => ts.filter(t => t.id !== id)), 3200);
+  };
+
+  const onAssign = (svc: Service, slot: import('./types').Slot) => setAssignTarget({ svc, slot });
+  const onRemove = (svcId: string | number, slotId: string) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: null, volunteerEmail: null })),
+    })));
+    pushToast('Volunteer removed');
+  };
+  const onConfirmAssign = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
+    })));
+    setAssignTarget(null);
+    pushToast(`${vol.name.split(' ')[0]} assigned · invite sent`);
+  };
+
+  const onSignUp = (svc: Service, slot: import('./types').Slot, vol: { name: string; email: string }) => {
+    if (!vol?.name?.trim() || !vol?.email?.trim()) return;
+    setSignupForm({ name: vol.name.trim(), email: vol.email.trim() });
+    setSignupTarget({ svc, slot });
+  };
+  const onConfirmSignUp = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
+    })));
+    setSignupTarget(null);
+    pushToast('Confirmation sent — see you there!');
+  };
+
+  const handleSignIn = (u: User) => {
+    setUser(u);
+    setAuthOpen(false);
+    pushToast(
+      u.source === 'google' ? `Signed in with Google as ${u.name.split(' ')[0]}`
+      : u.source === 'manual' ? `Welcome, ${u.name.split(' ')[0]}`
+      : `Welcome back, ${u.name.split(' ')[0]}`
+    );
+  };
+  const handleSignOut = () => {
+    setUser(null);
+    pushToast('Signed out');
+  };
+
+  const onCreateEvent = (prefilledDate: string | null) => setEventEdit({ initial: null, prefilledDate });
+  const onEditEvent = (svc: Service) => setEventEdit({ initial: svc, prefilledDate: null });
+  const onDeleteEvent = (svc: Service) => setEventDelete(svc);
+
+  const handleSaveEvent = (svc: Service) => {
+    const isEdit = services.some(s => s.id === svc.id);
+    setServices(prev => {
+      if (isEdit) return prev.map(s => s.id === svc.id ? svc : s);
+      return [...prev, svc].sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+    });
+    setEventEdit(null);
+    pushToast(isEdit ? `${svc.type} updated` : `${svc.type} added`);
+  };
+  const handleConfirmDelete = () => {
+    const svc = eventDelete!;
+    setServices(prev => prev.filter(s => s.id !== svc.id));
+    setEventDelete(null);
+    pushToast(`${svc.type} removed`);
+  };
+
+  const onRequestCoverage = (svcId: string | number, slotId: string) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, coverageRequested: true })),
+    })));
+    pushToast('Coverage requested — we\'ll find a substitute');
+  };
+  const onSelfRemove = (svcId: string | number, slotId: string) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({
+        ...sl, volunteer: null, volunteerEmail: null, coverageRequested: false,
+      })),
+    })));
+    pushToast('Commitment removed');
+  };
+  const onClearCoverage = (svcId: string | number, slotId: string) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, coverageRequested: false })),
+    })));
+    pushToast('Coverage request marked resolved');
+  };
+
+  const onAIVolunteerSignup = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
+      ...s,
+      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
+    })));
+    pushToast(`Signed up — confirmation sent to ${vol.email}`);
+  };
+  const onAICreateService = (svc: Service) => {
+    setServices(prev => [...prev, svc].sort((a, b) => a.dateISO.localeCompare(b.dateISO)));
+    pushToast(`${svc.type} added to calendar`);
+  };
+
+  const navTo = (v: string) => { setView(v as ViewId); setAdminSub(null); };
+
+  return (
+    <div className="app">
+      <Topbar view={view} user={user}
+              onOpenAuth={() => setAuthOpen(true)}
+              onSignOut={handleSignOut}
+              onNav={(v) => setView(v as ViewId)} />
+      <main className="main">
+        {view === 'ai' && (
+          <AIView user={user} services={services}
+                  onAIVolunteerSignup={onAIVolunteerSignup}
+                  onAIRequestCoverage={onRequestCoverage}
+                  onAICreateService={onAICreateService} />
+        )}
+        {view === 'calendar' && (
+          <CalendarView services={services} defaultView={t.defaultCalendarView}
+                        onAssign={onAssign} onRemove={onRemove}
+                        onCreateEvent={onCreateEvent}
+                        onEditEvent={onEditEvent}
+                        onDeleteEvent={onDeleteEvent} />
+        )}
+        {view === 'admin' && (
+          adminSub === null         ? <AdminHubView services={services} onNavSub={(sub) => setAdminSub(sub as AdminSubId)} /> :
+          adminSub === 'volunteers' ? <VolunteersView onBack={() => setAdminSub(null)} /> :
+          adminSub === 'admins'     ? <AdminsView onBack={() => setAdminSub(null)} /> :
+          adminSub === 'coverage'   ? <CoverageView services={services}
+                                                    onBack={() => setAdminSub(null)}
+                                                    onAssign={onAssign}
+                                                    onClearCoverage={onClearCoverage} /> :
+          adminSub === 'email'      ? <EmailView onBack={() => setAdminSub(null)} /> :
+          adminSub === 'settings'   ? <SettingsView onBack={() => setAdminSub(null)} /> :
+          null
+        )}
+        {view === 'signup' && (
+          <SignUpView services={services} user={user}
+                      onOpenAuth={() => setAuthOpen(true)}
+                      onSignUp={onSignUp}
+                      onRequestCoverage={onRequestCoverage}
+                      onSelfRemove={onSelfRemove} />
+        )}
+        {view === 'mydates' && (
+          <MyDatesView services={services} user={user}
+                       onOpenAuth={() => setAuthOpen(true)}
+                       onRequestCoverage={onRequestCoverage}
+                       onSelfRemove={onSelfRemove} />
+        )}
+      </main>
+
+      <BotNav view={view} onNav={navTo} user={user} />
+
+      {assignTarget && (
+        <AssignModal svc={assignTarget.svc} slot={assignTarget.slot}
+                     onClose={() => setAssignTarget(null)}
+                     onConfirm={onConfirmAssign} />
+      )}
+      {signupTarget && (
+        <SignUpModal svc={signupTarget.svc} slot={signupTarget.slot}
+                     name={signupForm.name} email={signupForm.email}
+                     onClose={() => setSignupTarget(null)}
+                     onConfirm={onConfirmSignUp} />
+      )}
+      {eventEdit && (
+        <EventEditModal initial={eventEdit.initial}
+                        prefilledDate={eventEdit.prefilledDate}
+                        onClose={() => setEventEdit(null)}
+                        onSave={handleSaveEvent} />
+      )}
+      {eventDelete && (
+        <ConfirmDialog
+          danger
+          title={`Delete ${eventDelete.type}?`}
+          message={`This will remove ${eventDelete.type} on ${eventDelete.date} and unassign ${eventDelete.slots.filter(s => s.volunteer).length} volunteer(s).`}
+          sub="This cannot be undone."
+          confirmLabel="Delete event"
+          onClose={() => setEventDelete(null)}
+          onConfirm={handleConfirmDelete} />
+      )}
+      {authOpen && (
+        <AuthSheet onClose={() => setAuthOpen(false)}
+                   onSignIn={handleSignIn}
+                   suggested={user ? { name: user.name, email: user.email } : null} />
+      )}
+      <ToastRail toasts={toasts} />
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Theme" />
+        <TweakRadio label="Density"
+                    value={t.density}
+                    options={['compact', 'regular', 'cozy']}
+                    onChange={v => setTweak('density', v as TweakValues['density'])} />
+        <TweakSelect label="Palette"
+                     value={t.palette}
+                     options={Object.entries(PALETTES).map(([id, p]) => ({ value: id, label: p.label }))}
+                     onChange={v => setTweak('palette', v)} />
+        <TweakSelect label="Heading font"
+                     value={t.headingFont}
+                     options={HEADING_FONTS.map(f => ({ value: f, label: f }))}
+                     onChange={v => setTweak('headingFont', v)} />
+        <TweakToggle label="High Holiday accents"
+                     value={t.hhAccents}
+                     onChange={v => setTweak('hhAccents', v)} />
+
+        <TweakSection label="Behavior" />
+        <TweakRadio label="Calendar opens to"
+                    value={t.defaultCalendarView}
+                    options={['list', 'grid']}
+                    onChange={v => setTweak('defaultCalendarView', v as TweakValues['defaultCalendarView'])} />
+        <TweakSelect label="Land on"
+                     value={t.landing}
+                     options={[
+                       { value: 'ai', label: 'AI Scheduler' },
+                       { value: 'calendar', label: 'Calendar' },
+                       { value: 'signup', label: 'Sign Up' },
+                       { value: 'mydates', label: 'My Dates' },
+                       { value: 'admin', label: 'Admin Hub' },
+                     ]}
+                     onChange={v => { setTweak('landing', v as ViewId); setView(v as ViewId); }} />
+      </TweaksPanel>
+    </div>
+  );
+}
