@@ -1,0 +1,1513 @@
+// Views for TBE Greeter Scheduler
+const { useState, useEffect, useRef, useMemo } = React;
+
+// ═══════════════════════════════════════════════════════════════
+// AI Scheduler — admin & volunteer
+// ═══════════════════════════════════════════════════════════════
+
+// ── Admin chip set ───────────────────────────────────────────
+const ADMIN_CHIPS = [
+  {
+    label: "Add a Friday Shabbat April 24",
+    user:  "Add a Friday Shabbat April 24",
+    ai:    "Done — I've added Kabbalat Shabbat for Friday, April 24, 2026 at 6:30 PM. As a regular Shabbat, it has one Greeter slot open.",
+    card:  {
+      title: "Kabbalat Shabbat",
+      rows: [["Date", "Friday, April 24, 2026"], ["Time", "6:30 PM"], ["Slots", "1 × Greeter"]],
+    },
+  },
+  {
+    label: "Set up Rosh Hashanah Oct 1 9am–12pm",
+    user:  "Set up Rosh Hashanah Oct 1 9am–12pm",
+    ai:    "Got it. Rosh Hashanah Morning is scheduled for Thursday, October 1, 2026, 9:00 AM – 12:00 PM. I've broken the morning into six 30-minute windows with two greeters and two ushers in each — 24 slots total.",
+    card:  {
+      title: "Rosh Hashanah Morning",
+      rows: [
+        ["Date", "Thursday, October 1, 2026"], ["Time", "9:00 AM – 12:00 PM"],
+        ["Windows", "6 × 30 min"], ["Slots", "24 total — Greeter ×2, Usher ×2 per window"],
+      ],
+    },
+  },
+  {
+    label: "Add Purim party Mar 13, 3 greeters",
+    user:  "Add Purim party March 13 7pm, 3 greeters",
+    ai:    "Added a Purim Party for Friday, March 13, 2026 at 7:00 PM with three Greeter slots. Let me know if you'd like to add ushers too.",
+    card:  {
+      title: "Purim Party",
+      rows: [["Date", "Friday, March 13, 2026"], ["Time", "7:00 PM"], ["Slots", "3 × Greeter"]],
+    },
+  },
+  {
+    label: "Add Yom Kippur Oct 10 9am–1pm",
+    user:  "Add Yom Kippur Oct 10 9am to 1pm",
+    ai:    "Yom Kippur Morning is on the calendar for Saturday, October 10, 2026, 9:00 AM – 1:00 PM. Same High Holiday pattern: eight 30-minute windows, with two greeters and two ushers each — 32 slots open.",
+    card:  {
+      title: "Yom Kippur Morning",
+      rows: [
+        ["Date", "Saturday, October 10, 2026"], ["Time", "9:00 AM – 1:00 PM"],
+        ["Windows", "8 × 30 min"], ["Slots", "32 total — Greeter ×2, Usher ×2 per window"],
+      ],
+    },
+  },
+];
+
+// ── Volunteer chips (intents resolved at runtime) ────────────
+const VOLUNTEER_CHIPS = [
+  { intent: "signup-next",     label: "Sign me up for this Friday" },
+  { intent: "list-my-dates",   label: "Send me my upcoming dates" },
+  { intent: "find-sub-next",   label: "I can't make my next service" },
+  { intent: "next-service",    label: "What's my next service?" },
+];
+
+const GUEST_CHIPS = [
+  { intent: "guest-prompt",  label: "What's coming up?" },
+  { intent: "guest-prompt",  label: "How do I sign up?" },
+];
+
+function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverage }) {
+  const effectiveRole = user?.role === "admin" ? "admin" : "volunteer";
+  const isGuest = !user;
+
+  const intro = effectiveRole === "admin"
+    ? "Hi! I'm here to help you set up greeter and usher coverage for upcoming services. Tell me what's on the calendar — I'll handle the slot details."
+    : isGuest
+      ? "Welcome! I can help you find a service to sign up for. Tell me about yourself or browse the open spots in Sign Up. Sign in to manage your own schedule."
+      : `Hi ${user.name.split(" ")[0]}! I can sign you up for services, send you your upcoming dates, or find a substitute when you can't make it. What can I do?`;
+
+  const heroEyebrow = effectiveRole === "admin" ? "AI Scheduling Assistant" : "Your Scheduling Buddy";
+  const heroTitle = effectiveRole === "admin" ? "Plan a service in plain English." : "Manage your schedule by chat.";
+  const heroDesc  = effectiveRole === "admin"
+    ? "Tell me about an upcoming service — Shabbat, High Holiday, or something custom — and I'll set up the right slots automatically."
+    : isGuest
+      ? "Sign in to have me manage your dates. Or ask what's coming up and I'll show you the calendar."
+      : "Ask me to sign you up, list your dates, or find a sub. Try a quick one below.";
+
+  const [messages, setMessages] = useState([{ role: "ai", text: intro, card: null }]);
+  const [input, setInput] = useState("");
+  const [typing, setTyping] = useState(false);
+  const [streamText, setStreamText] = useState("");
+  const [streamCard, setStreamCard] = useState(null);
+  const scrollRef = useRef(null);
+
+  // Refresh greeting when user changes
+  useEffect(() => {
+    setMessages([{ role: "ai", text: intro, card: null }]);
+  }, [user?.email]);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, typing, streamText]);
+
+  // ── Intent resolution ─────────────────────────────────────
+
+  const resolveVolunteerIntent = (text, intent) => {
+    const lc = text.toLowerCase();
+    const inferred = intent || (
+      /sign me up|put me down|add me to/.test(lc) ? "signup-next" :
+      /my dates|my upcoming|my schedule|list.*dates/.test(lc) ? "list-my-dates" :
+      /can't make|find.*sub|need.*sub|cover for me|replace/.test(lc) ? "find-sub-next" :
+      /next service|when.*next/.test(lc) ? "next-service" :
+      null
+    );
+
+    if (inferred === "signup-next") {
+      // Find next Friday Shabbat with an open Greeter slot
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const candidate = services
+        .filter(s => s.dateISO >= todayISO && /Kabbalat/.test(s.type))
+        .map(s => ({ svc: s, slot: s.slots.find(sl => !sl.volunteer) }))
+        .find(x => x.slot);
+      if (!candidate) {
+        return {
+          user: text,
+          ai: "All Friday Kabbalat Shabbat services are fully staffed right now — thank you to whoever signed up before you. Want me to check Saturday mornings instead?",
+          card: null,
+        };
+      }
+      const { svc, slot } = candidate;
+      // Actually sign them up
+      onAIVolunteerSignup(svc.id, slot.id, user);
+      return {
+        user: text,
+        ai: `Done — you're signed up to greet at ${svc.type} this ${svc.date.split(",")[0]}. A confirmation email and Google Calendar invite are on their way.`,
+        card: {
+          title: svc.type,
+          rows: [
+            ["When", `${svc.date} · ${svc.time}`],
+            ["Role", slot.role],
+            ["You", `${user.name} · ${user.email}`],
+            ["", "✓ Calendar invite + confirmation sent"],
+          ],
+        },
+      };
+    }
+
+    if (inferred === "list-my-dates") {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const mine = [];
+      services.forEach(svc => svc.slots.forEach(sl => {
+        if (sl.volunteer && sl.volunteer.toLowerCase() === user.name.toLowerCase() && svc.dateISO >= todayISO) {
+          mine.push({ svc, slot: sl });
+        }
+      }));
+      if (mine.length === 0) {
+        return {
+          user: text,
+          ai: `You're not signed up for anything yet, ${user.name.split(" ")[0]}. Say "sign me up for this Friday" and I'll find you the next open spot.`,
+          card: null,
+        };
+      }
+      return {
+        user: text,
+        ai: `You're on the schedule for ${mine.length} service${mine.length === 1 ? "" : "s"}. I'm sending the full list to ${user.email} right now — here's a preview:`,
+        card: {
+          title: "Your upcoming dates",
+          rows: mine.slice(0, 5).map(({ svc, slot }) => [
+            svc.date.split(",")[0] + ", " + svc.date.split(",")[1].trim(),
+            `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ""} · ${svc.time}`
+          ]).concat(mine.length > 5 ? [["", `+ ${mine.length - 5} more`]] : []).concat([["", "✓ Sent to your email"]]),
+        },
+      };
+    }
+
+    if (inferred === "find-sub-next") {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      let found = null;
+      for (const svc of services) {
+        if (svc.dateISO < todayISO) continue;
+        const sl = svc.slots.find(s => s.volunteer && s.volunteer.toLowerCase() === user.name.toLowerCase() && !s.coverageRequested);
+        if (sl) { found = { svc, slot: sl }; break; }
+      }
+      if (!found) {
+        return {
+          user: text,
+          ai: `I don't see any upcoming services on your schedule. Nothing to find coverage for!`,
+          card: null,
+        };
+      }
+      onAIRequestCoverage(found.svc.id, found.slot.id);
+      return {
+        user: text,
+        ai: `Got it. I've flagged your ${found.slot.role} slot at ${found.svc.type} (${found.svc.date}) and sent a note to the volunteer distribution list asking if anyone can cover. I'll let you know when someone steps in.`,
+        card: {
+          title: "Looking for a substitute",
+          rows: [
+            ["Event",   `${found.svc.type} · ${found.svc.date}`],
+            ["Role",    `${found.slot.role}${found.slot.timeSlot ? ` · ${found.slot.timeSlot}` : ""}`],
+            ["Status",  "Coverage requested — admin & list notified"],
+          ],
+        },
+      };
+    }
+
+    if (inferred === "next-service") {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      let found = null;
+      for (const svc of services) {
+        if (svc.dateISO < todayISO) continue;
+        const sl = svc.slots.find(s => s.volunteer && s.volunteer.toLowerCase() === user.name.toLowerCase());
+        if (sl) { found = { svc, slot: sl }; break; }
+      }
+      if (!found) {
+        return {
+          user: text,
+          ai: `You're not on the schedule for anything upcoming. Want me to sign you up for the next Friday Shabbat?`,
+          card: null,
+        };
+      }
+      return {
+        user: text,
+        ai: `Your next service is ${found.svc.type} on ${found.svc.date} at ${found.svc.time}.`,
+        card: {
+          title: found.svc.type,
+          rows: [
+            ["When",  `${found.svc.date} · ${found.svc.time}`],
+            ["Role",  `${found.slot.role}${found.slot.timeSlot ? ` · ${found.slot.timeSlot}` : ""}`],
+          ],
+        },
+      };
+    }
+
+    // Fallback for volunteer
+    return {
+      user: text,
+      ai: "I can sign you up for a service, send you your upcoming dates, or find a substitute when you can't make it. Try one of the chips below.",
+      card: null,
+    };
+  };
+
+  const resolveAdminInput = (text, chipMatch) => {
+    if (chipMatch) return chipMatch;
+    return {
+      user: text,
+      ai: "I can help schedule that. In the production app I'll parse the date, time, and slot details from your message and add it to the calendar directly. For now, try one of the quick examples below.",
+      card: null,
+    };
+  };
+
+  // ── Stream a response ─────────────────────────────────────
+
+  const runResponse = async (response) => {
+    setMessages(m => [...m, { role: "user", text: response.user }]);
+    setTyping(true);
+    await new Promise(r => setTimeout(r, 550));
+    setTyping(false);
+
+    setStreamText("");
+    setStreamCard(null);
+    const txt = response.ai;
+    for (let i = 0; i <= txt.length; i++) {
+      setStreamText(txt.slice(0, i));
+      await new Promise(r => setTimeout(r, 10 + Math.random() * 8));
+    }
+    if (response.card) {
+      await new Promise(r => setTimeout(r, 200));
+      setStreamCard(response.card);
+      await new Promise(r => setTimeout(r, 350));
+    }
+    setMessages(m => [...m, { role: "ai", text: txt, card: response.card }]);
+    setStreamText("");
+    setStreamCard(null);
+  };
+
+  const sendChip = (chip) => {
+    if (effectiveRole === "admin") {
+      if (chip.user) runResponse(chip);
+    } else if (isGuest) {
+      // Guest chips just nudge toward sign-in
+      runResponse({
+        user: chip.label,
+        ai: "I can do that once you're signed in. Tap Sign in at the top right — Google works, or use any email. Or hop over to Sign Up to add yourself to a service as a guest.",
+        card: null,
+      });
+    } else {
+      const text = chip.label;
+      runResponse(resolveVolunteerIntent(text, chip.intent));
+    }
+  };
+
+  const send = () => {
+    const t = input.trim();
+    if (!t) return;
+    setInput("");
+    if (effectiveRole === "admin") {
+      const m = ADMIN_CHIPS.find(c => c.user.toLowerCase() === t.toLowerCase());
+      runResponse(resolveAdminInput(t, m));
+    } else if (isGuest) {
+      runResponse({
+        user: t,
+        ai: "Sign in and I'll be able to actually help with your schedule. For now, you can browse open spots in Sign Up.",
+        card: null,
+      });
+    } else {
+      runResponse(resolveVolunteerIntent(t, null));
+    }
+  };
+
+  const chips = effectiveRole === "admin"
+    ? ADMIN_CHIPS
+    : isGuest
+      ? [
+          { intent: "guest-nudge", label: "What's coming up this Friday?" },
+          { intent: "guest-nudge", label: "How do I sign up?" },
+          { intent: "guest-nudge", label: "Can I get an account?" },
+        ]
+      : VOLUNTEER_CHIPS;
+
+  return (
+    <div className="ai" data-screen-label="ai-scheduler">
+      <div className="ai-hero">
+        <span className="star s1">✦</span>
+        <span className="star s2">✦</span>
+        <span className="star s3">✦</span>
+        <span className="star s4">✦</span>
+        <div className="eyebrow">{heroEyebrow}</div>
+        <h2>{heroTitle}</h2>
+        <p>{heroDesc}</p>
+      </div>
+
+      <div className="chat" ref={scrollRef}>
+        {messages.map((m, i) => (
+          <div className={`bubble ${m.role}`} key={i}>
+            {m.role === "ai" && <div className="ai-meta">Assistant</div>}
+            <div>{m.text}</div>
+            {m.card && <ActionCard card={m.card} />}
+          </div>
+        ))}
+        {typing && (
+          <div className="bubble ai">
+            <div className="ai-meta">Assistant</div>
+            <div className="typing"><span /><span /><span /></div>
+          </div>
+        )}
+        {streamText && (
+          <div className="bubble ai">
+            <div className="ai-meta">Assistant</div>
+            <div>{streamText}<span style={{
+              display: "inline-block", width: 7, height: 14,
+              background: "var(--c-gold)", marginLeft: 2,
+              transform: "translateY(2px)",
+              animation: "blink 1s infinite"
+            }} /></div>
+            {streamCard && <ActionCard card={streamCard} />}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="divider-orn">Try one</div>
+        <div className="chips">
+          {chips.map((c, i) => (
+            <button key={i} className="chip" onClick={() => sendChip(c)}>
+              <span className="spk">✦</span>{c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="chat-input-bar">
+        <textarea
+          rows={1}
+          placeholder={effectiveRole === "admin" ? "Tell me about a service…" : "Ask me anything about your schedule…"}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+          }}
+        />
+        <button className="send" onClick={send} disabled={!input.trim()}>
+          <Icon name="send" size={18} />
+        </button>
+      </div>
+
+      <style>{`@keyframes blink { 50% { opacity: 0; } }`}</style>
+    </div>
+  );
+}
+
+function ActionCard({ card }) {
+  return (
+    <div className="action-card">
+      <div className="title">✦ Added · {card.title}</div>
+      {card.rows.map(([k, v], i) => (
+        <div className="row" key={i}><strong style={{ minWidth: 56, display: "inline-block" }}>{k}</strong> {v}</div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Calendar (List + Grid)
+// ═══════════════════════════════════════════════════════════════
+
+function CalendarView({ services, defaultView, onAssign, onRemove, onCreateEvent, onEditEvent, onDeleteEvent }) {
+  const [mode, setMode] = useState(defaultView || "list");
+  useEffect(() => { setMode(defaultView || "list"); }, [defaultView]);
+
+  const stats = useMemo(() => {
+    let filled = 0, open = 0;
+    services.forEach(s => s.slots.forEach(sl => sl.volunteer ? filled++ : open++));
+    return { filled, open };
+  }, [services]);
+
+  return (
+    <div data-screen-label="calendar">
+      <div className="page-head">
+        <div className="eyebrow">Coverage</div>
+        <h1>The Calendar</h1>
+        <p>Tap any date to see, edit, or add events. Filled slots show in green; openings need a volunteer.</p>
+      </div>
+
+      <div className="stats" style={{ marginTop: 4 }}>
+        <div className="stat">
+          <div className="n"><span className="accent-green">{stats.filled}</span></div>
+          <div className="lbl">Slots Filled</div>
+        </div>
+        <div className="stat">
+          <div className="n"><span className="accent-red">{stats.open}</span></div>
+          <div className="lbl">Slots Open</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+        <div className="results-pill"><strong>{services.length}</strong> services scheduled</div>
+        <div className="seg">
+          <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>List</button>
+          <button aria-pressed={mode === "grid"} onClick={() => setMode("grid")}>Grid</button>
+        </div>
+      </div>
+
+      {mode === "list" ? (
+        <div style={{ display: "grid", gap: 12, marginTop: 8 }}>
+          {services.map(svc => (
+            <ServiceCard key={svc.id} svc={svc} mode="admin"
+                         onAssign={onAssign} onRemove={onRemove}
+                         onEdit={onEditEvent} onDelete={onDeleteEvent} />
+          ))}
+        </div>
+      ) : (
+        <GridCalendar services={services}
+                      onAssign={onAssign} onRemove={onRemove}
+                      onCreateEvent={onCreateEvent}
+                      onEditEvent={onEditEvent}
+                      onDeleteEvent={onDeleteEvent} />
+      )}
+
+      <button className="fab" onClick={() => onCreateEvent(null)}>
+        <span className="plus">+</span> New event
+      </button>
+    </div>
+  );
+}
+
+function GridCalendar({ services, onAssign, onRemove, onCreateEvent, onEditEvent, onDeleteEvent }) {
+  const [year, setYear] = useState(2026);
+  const [month, setMonth] = useState(4); // May
+  const [selected, setSelected] = useState(null);
+
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0, 10);
+
+  const first = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWd = first.getDay();
+  const cells = [];
+  for (let i = 0; i < startWd; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    cells.push({ d, iso });
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const svcByDay = useMemo(() => {
+    const m = {};
+    services.forEach(s => {
+      if (!m[s.dateISO]) m[s.dateISO] = [];
+      m[s.dateISO].push(s);
+    });
+    return m;
+  }, [services]);
+
+  const monthLabel = new Date(year, month, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  const nav = (dir) => {
+    let m = month + dir, y = year;
+    if (m < 0) { m = 11; y--; }
+    if (m > 11) { m = 0; y++; }
+    setMonth(m); setYear(y); setSelected(null);
+  };
+
+  const selectedSvcs = selected ? (svcByDay[selected] || []) : [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+      <div className="cal-legend">
+        <div className="item"><span className="swatch full" /> Fully Staffed</div>
+        <div className="item"><span className="swatch partial" /> Partially Open</div>
+        <div className="item"><span className="swatch open" /> Unfilled</div>
+      </div>
+
+      <div className="cal">
+        <div className="cal-hd">
+          <div className="month">{monthLabel}</div>
+          <div className="cal-nav">
+            <button onClick={() => nav(-1)}><Icon name="chevL" size={14} /></button>
+            <button onClick={() => nav(1)}><Icon name="chevR" size={14} /></button>
+          </div>
+        </div>
+        <div className="cal-grid">
+          {["S","M","T","W","T","F","S"].map((w, i) => (
+            <div key={i} className="cal-wdh">{w}</div>
+          ))}
+          {cells.map((cell, i) => {
+            if (!cell) return <div key={i} className="cal-cell muted" />;
+            const svcs = svcByDay[cell.iso] || [];
+            const has = svcs.length > 0;
+            const isToday = cell.iso === todayISO;
+            const isSel = cell.iso === selected;
+
+            const initials = [];
+            const seen = new Set();
+            svcs.forEach(s => s.slots.forEach(sl => {
+              if (sl.volunteer && !seen.has(sl.volunteer)) {
+                seen.add(sl.volunteer);
+                const parts = sl.volunteer.trim().split(/\s+/);
+                const ini = (parts[0]?.[0] || "") + (parts[1]?.[0] || "");
+                initials.push({ ini: ini.toUpperCase(), name: sl.volunteer });
+              }
+            }));
+
+            return (
+              <div key={i}
+                   className={`cal-cell has ${isToday ? "today" : ""} ${isSel ? "selected" : ""}`}
+                   onClick={() => setSelected(isSel ? null : cell.iso)}>
+                <div className="num">{cell.d}</div>
+                {has && (
+                  <div className="pills">
+                    {svcs.slice(0, 2).map(s => {
+                      const st = window.TBE_HELPERS.statusFor(s);
+                      return <div key={s.id} className={`cal-pill ${st.kind}`}>{abbrev(s.type)}</div>;
+                    })}
+                    {svcs.length > 2 && <div className="cal-pill open">+{svcs.length - 2}</div>}
+                  </div>
+                )}
+                {initials.length > 0 && (
+                  <div className="initials">
+                    {initials.slice(0, 3).map((x, j) => (
+                      <span key={j} className="cal-init" title={x.name}>{x.ini}</span>
+                    ))}
+                    {initials.length > 3 && (
+                      <span className="cal-init more">+{initials.length - 3}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {selected && (
+        <div className="day-panel">
+          <div className="day-panel-hd">
+            <span>{window.TBE_HELPERS.fmtDate(selected)}</span>
+            <button className="btn sm ghost" onClick={() => setSelected(null)}>
+              <Icon name="x" size={14} /> Close
+            </button>
+          </div>
+          {selectedSvcs.length === 0 ? (
+            <div className="day-create">
+              <div className="glyph">✦</div>
+              <div className="msg">No events scheduled for this day yet.</div>
+              <button className="btn primary" onClick={() => onCreateEvent(selected)}>
+                <Icon name="pen" size={14} /> Create event on this day
+              </button>
+            </div>
+          ) : (
+            <>
+              {selectedSvcs.map(svc => (
+                <ServiceCard key={svc.id} svc={svc} mode="admin"
+                             onAssign={onAssign} onRemove={onRemove}
+                             onEdit={onEditEvent} onDelete={onDeleteEvent} />
+              ))}
+              <button className="btn ghost add-more"
+                      onClick={() => onCreateEvent(selected)}
+                      style={{ alignSelf: "flex-start" }}>
+                <span style={{
+                  width: 18, height: 18, borderRadius: "50%",
+                  background: "var(--c-gold)", color: "var(--c-navy)",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 13, fontWeight: 700,
+                }}>+</span>
+                Add another event on this day
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function abbrev(type) {
+  // produce something readable in <72px width
+  return type
+    .replace("Kabbalat Shabbat", "Kab. Shab.")
+    .replace("Shabbat Morning", "Shab. AM")
+    .replace("Rosh Hashanah Morning", "Rosh Hash.")
+    .replace("Yom Kippur Morning", "Yom Kip.")
+    .replace("Erev Shavuot", "Shavuot Eve")
+    .replace("Shavuot Morning", "Shavuot AM");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Sign Up (volunteer)
+// ═══════════════════════════════════════════════════════════════
+
+function SignUpView({ services, onSignUp, user, onOpenAuth, onRequestCoverage, onSelfRemove }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+
+  const effectiveName  = user ? user.name  : name;
+  const effectiveEmail = user ? user.email : email;
+  const ready = !!effectiveName.trim() && !!effectiveEmail.trim();
+
+  // Show services with openings OR that have user as a volunteer (so they can manage)
+  const visible = services.filter(s => {
+    const hasOpen = window.TBE_HELPERS.openCount(s) > 0;
+    const mine = user && s.slots.some(sl => sl.volunteer && sl.volunteer.toLowerCase() === user.name.toLowerCase());
+    return hasOpen || mine;
+  });
+
+  return (
+    <div data-screen-label="signup">
+      <div className="page-head">
+        <div className="eyebrow">Volunteer</div>
+        <h1>Sign Up to Greet</h1>
+        <p>Welcome friends at the door for one of our upcoming services. Open spots fill on a first-come basis.</p>
+      </div>
+
+      {user ? (
+        <div className="welcome-card">
+          <div className="avatar">{user.name.charAt(0)}</div>
+          <div className="who">
+            <div className="eyebrow">Signed in</div>
+            <div className="nm">Hi, {user.name.split(" ")[0]}</div>
+            <div className="em">{user.email}</div>
+          </div>
+          <button className="swap" onClick={onOpenAuth}>Switch</button>
+        </div>
+      ) : (
+        <>
+          <div className="signin-prompt">
+            <Icon name="user" size={16} />
+            <span><strong>Have an account?</strong> Sign in so we remember you.</span>
+            <button onClick={onOpenAuth}>Sign in</button>
+          </div>
+          <div className="signup-form">
+            <div className="lbl-pair">
+              <label>Your name</label>
+              <input type="text" placeholder="e.g. Miriam Katz"
+                     value={name} onChange={e => setName(e.target.value)} />
+            </div>
+            <div className="lbl-pair">
+              <label>Email</label>
+              <input type="email" placeholder="you@email.com"
+                     value={email} onChange={e => setEmail(e.target.value)} />
+            </div>
+          </div>
+        </>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+        <div className="results-pill">
+          <strong>{visible.length}</strong>{" "}
+          {visible.length === 1 ? "service" : "services"} {user ? "to manage" : "with openings"}
+        </div>
+        {!ready && !user && (
+          <div style={{ fontSize: 11.5, color: "var(--c-muted)", fontStyle: "italic" }}>
+            Add your details to enable sign-up
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gap: 12, marginTop: 4 }}>
+        {visible.length === 0 ? (
+          <div className="empty">
+            <div className="glyph">✦</div>
+            All slots are filled. Thank you to our volunteers!
+          </div>
+        ) : visible.map(svc => (
+          <ServiceCard key={svc.id} svc={svc} mode="volunteer"
+                       currentUserName={user?.name}
+                       onSignUp={(svc, slot) => onSignUp(svc, slot, { name: effectiveName, email: effectiveEmail })}
+                       onRequestCoverage={onRequestCoverage}
+                       onSelfRemove={onSelfRemove}
+                       name={effectiveName} email={effectiveEmail} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// My Dates
+// ═══════════════════════════════════════════════════════════════
+
+function MyDatesView({ services, user, onOpenAuth, onRequestCoverage, onSelfRemove }) {
+  const [query, setQuery] = useState(user?.name || "");
+  const [submitted, setSubmitted] = useState(user?.name || "");
+
+  // Keep query/submitted in sync if the user logs in/out while viewing
+  useEffect(() => {
+    if (user) { setQuery(user.name); setSubmitted(user.name); }
+  }, [user?.name]);
+
+  const lookup = () => setSubmitted(query.trim());
+
+  const matches = useMemo(() => {
+    if (!submitted) return null;
+    const q = submitted.toLowerCase();
+    const out = [];
+    services.forEach(svc => {
+      svc.slots.forEach(sl => {
+        if (sl.volunteer && sl.volunteer.toLowerCase().includes(q)) {
+          out.push({ svc, slot: sl });
+        }
+      });
+    });
+    return out;
+  }, [submitted, services]);
+
+  return (
+    <div data-screen-label="mydates">
+      <div className="page-head">
+        <div className="eyebrow">Volunteer</div>
+        <h1>My Dates</h1>
+        <p>{user ? "Your upcoming greeter and usher assignments." : "Look up the services you're scheduled to greet at."}</p>
+      </div>
+
+      {user ? (
+        <div className="welcome-card" style={{ marginBottom: 4 }}>
+          <div className="avatar">{user.name.charAt(0)}</div>
+          <div className="who">
+            <div className="eyebrow">Signed in</div>
+            <div className="nm">{user.name}</div>
+            <div className="em">{user.email}</div>
+          </div>
+          <button className="swap" onClick={onOpenAuth}>Switch</button>
+        </div>
+      ) : (
+        <>
+          <div className="signin-prompt">
+            <Icon name="user" size={16} />
+            <span><strong>Sign in</strong> to see your dates automatically.</span>
+            <button onClick={onOpenAuth}>Sign in</button>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="text"
+              placeholder="Or enter your name…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && lookup()}
+              style={{
+                flex: 1, padding: "11px 14px",
+                background: "var(--c-card)",
+                border: "1px solid var(--c-line)",
+                borderRadius: "var(--r-md)",
+                outline: "none", fontSize: 14,
+              }}
+            />
+            <button className="btn primary" onClick={lookup}>
+              <Icon name="search" size={14} /> Look Up
+            </button>
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: 14 }}>
+        {matches === null && (
+          <div className="empty">
+            <div className="glyph">✦</div>
+            Enter your name and tap Look Up.
+          </div>
+        )}
+        {matches !== null && matches.length === 0 && (
+          <div className="empty">
+            <div className="glyph">·</div>
+            No upcoming assignments {user ? "yet" : `found for "${submitted}"`}. Head to Sign Up to volunteer.
+          </div>
+        )}
+        {matches !== null && matches.length > 0 && (
+          <>
+            <div className="results-pill" style={{ marginBottom: 10 }}>
+              <strong>{matches.length}</strong> upcoming assignment{matches.length === 1 ? "" : "s"}
+              {!user && ` for ${submitted}`}
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {matches.map(({ svc, slot }, i) => (
+                <div key={i} className="card">
+                  <div className="card-hd no-border">
+                    <DateBadge iso={svc.dateISO} />
+                    <div className="card-info">
+                      <div className="type">{svc.type}</div>
+                      <div className="meta">
+                        <span style={{ whiteSpace: "nowrap" }}>{svc.date.split(",")[0]}</span>
+                        <span className="sep">·</span>
+                        <span style={{ whiteSpace: "nowrap" }}>{svc.time}</span>
+                        {svc.isHH && <span className="tag-hh">HH</span>}
+                      </div>
+                      <div style={{
+                        marginTop: 8,
+                        display: "inline-flex", gap: 6, alignItems: "center",
+                        fontSize: 12, color: "var(--c-gold)",
+                        fontWeight: 600, letterSpacing: "0.04em",
+                      }}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: "50%",
+                          background: "var(--c-gold)",
+                        }} />
+                        {slot.role}{slot.timeSlot ? ` · ${slot.timeSlot}` : ""}
+                        {slot.coverageRequested && (
+                          <span className="cov-tag" style={{ marginLeft: 4 }}>Coverage requested</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {user && (
+                    <div className="card-admin-row">
+                      <span className="lbl">Your commitment</span>
+                      {!slot.coverageRequested && (
+                        <button className="slot-action"
+                                onClick={() => onRequestCoverage(svc.id, slot.id)}>
+                          Request coverage
+                        </button>
+                      )}
+                      <button className="slot-action danger"
+                              onClick={() => onSelfRemove(svc.id, slot.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Email Templates
+// ═══════════════════════════════════════════════════════════════
+
+const DEFAULT_REMINDER = `Shalom {volunteer_name},
+
+A gentle reminder that we still have a few greeter and usher openings on the calendar. If you're able to take one, your community thanks you.
+
+{open_slots_list}
+
+Sign up here: {signup_link}
+
+With gratitude,
+Temple Beth El`;
+
+const DEFAULT_CONFIRMATION = `Shalom {volunteer_name},
+
+Thank you for serving as {role} at {service_type} on {date}.
+
+Time: {time}
+{timeslot_line}
+
+A Google Calendar invite is attached to this message. We'll see you at the door!
+
+— Temple Beth El`;
+
+function EmailView({ onBack }) {
+  const [tab, setTab] = useState("reminder");
+  const [reminder, setReminder] = useState(DEFAULT_REMINDER);
+  const [confirmation, setConfirmation] = useState(DEFAULT_CONFIRMATION);
+  const [preview, setPreview] = useState(false);
+  const [sendState, setSendState] = useState(null);
+  const textRef = useRef(null);
+
+  const insertVar = (v) => {
+    const el = textRef.current;
+    if (!el) return;
+    const start = el.selectionStart, end = el.selectionEnd;
+    const cur = tab === "reminder" ? reminder : confirmation;
+    const next = cur.slice(0, start) + v + cur.slice(end);
+    if (tab === "reminder") setReminder(next); else setConfirmation(next);
+    setTimeout(() => {
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + v.length;
+    }, 0);
+  };
+
+  const variables = tab === "reminder"
+    ? ["{volunteer_name}", "{open_slots_list}", "{signup_link}"]
+    : ["{volunteer_name}", "{service_type}", "{date}", "{time}", "{role}", "{timeslot_line}"];
+
+  const sample = tab === "reminder" ? {
+    volunteer_name: "Miriam",
+    open_slots_list: "• Friday, May 22 — Erev Shavuot, Usher 2 (8:00 PM)\n• Friday, May 29 — Kabbalat Shabbat, Greeter (6:30 PM)",
+    signup_link: "tbe.org/greet",
+  } : {
+    volunteer_name: "Miriam",
+    service_type: "Kabbalat Shabbat",
+    date: "Friday, May 29",
+    time: "6:30 PM",
+    role: "Greeter",
+    timeslot_line: "",
+  };
+
+  const renderTemplate = (t) => {
+    let out = t;
+    Object.entries(sample).forEach(([k, v]) => {
+      out = out.replaceAll("{" + k + "}", v);
+    });
+    return out;
+  };
+
+  const startSend = () => {
+    const init = window.TBE_DATA.VOLUNTEERS.map(v => ({ ...v, status: "queued" }));
+    setSendState(init);
+    init.forEach((v, i) => {
+      setTimeout(() => {
+        setSendState(prev => prev.map((p, idx) => idx === i ? { ...p, status: "sending" } : p));
+      }, 300 + i * 360);
+      setTimeout(() => {
+        setSendState(prev => prev.map((p, idx) => idx === i ? { ...p, status: "sent" } : p));
+      }, 900 + i * 360);
+    });
+  };
+
+  const current = tab === "reminder" ? reminder : confirmation;
+
+  return (
+    <div data-screen-label="email-templates">
+      {onBack ? (
+        <div className="sub-head">
+          <button className="back-btn" onClick={onBack}><Icon name="chevL" size={16} /></button>
+          <div className="page-head" style={{ flex: 1, marginBottom: 0 }}>
+            <div className="eyebrow">Admin · Communication</div>
+            <h1>Email Templates</h1>
+          </div>
+        </div>
+      ) : (
+        <div className="page-head">
+          <div className="eyebrow">Communication</div>
+          <h1>Email Templates</h1>
+          <p>Edit the messages we send to volunteers. Variables in braces are filled in automatically.</p>
+        </div>
+      )}
+
+      <div className="tpl-tabs">
+        <button aria-selected={tab === "reminder"} onClick={() => { setTab("reminder"); setPreview(false); }}>
+          Weekly Reminder
+        </button>
+        <button aria-selected={tab === "confirmation"} onClick={() => { setTab("confirmation"); setPreview(false); }}>
+          Confirmation
+        </button>
+      </div>
+
+      <div className="tpl-banner">
+        <span className="ico"><Icon name="info" size={16} /></span>
+        {tab === "reminder"
+          ? "Sent to all volunteers when you tap Send. Intended for a weekly cadence."
+          : "Sent automatically whenever a volunteer is assigned, or when one signs themselves up."}
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <div style={{
+          fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase",
+          color: "var(--c-muted)", fontWeight: 600, marginBottom: 6,
+        }}>
+          Insert variable
+        </div>
+        <div className="var-chips">
+          {variables.map(v => (
+            <button key={v} className="var-chip" onClick={() => insertVar(v)}>{v}</button>
+          ))}
+        </div>
+      </div>
+
+      <textarea ref={textRef}
+                className="tpl-text"
+                value={current}
+                onChange={e => tab === "reminder" ? setReminder(e.target.value) : setConfirmation(e.target.value)} />
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={() => setPreview(!preview)}>
+          {preview ? "Hide preview" : "Preview"}
+        </button>
+        <button className="btn primary">Save template</button>
+      </div>
+
+      {preview && (
+        <div className="email-preview" style={{ marginTop: 4 }}>
+          <div className="row">
+            <div className="lbl">To</div>
+            <div className="val">{sample.volunteer_name} &lt;sample@email.com&gt;</div>
+          </div>
+          <div className="row">
+            <div className="lbl">Subj</div>
+            <div className="val">
+              {tab === "reminder"
+                ? "This week at Temple Beth El"
+                : `You're scheduled — ${sample.service_type}`}
+            </div>
+          </div>
+          <div className="body">{renderTemplate(current)}</div>
+        </div>
+      )}
+
+      {tab === "reminder" && (
+        <>
+          <div className="divider-orn">Distribution</div>
+          <button className="btn gold" onClick={startSend} disabled={!!sendState && sendState.some(s => s.status === "sending")}>
+            <Icon name="send" size={14} /> Send to All Volunteers
+          </button>
+          {sendState && (
+            <div className="card" style={{ padding: "8px 16px", marginTop: 8 }}>
+              {sendState.map((v, i) => (
+                <div className="send-row" key={i}>
+                  <div className="name">
+                    {v.name}
+                    <span className="em">{v.email}</span>
+                  </div>
+                  <span className={`status ${v.status}`}>
+                    {v.status === "queued" && "Queued"}
+                    {v.status === "sending" && "Sending…"}
+                    {v.status === "sent" && "Sent"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Admin Hub — entry point for admin sub-screens
+// ═══════════════════════════════════════════════════════════════
+
+function AdminHubView({ services, onNavSub }) {
+  const coverageCount = useMemo(() => {
+    let n = 0;
+    services.forEach(s => s.slots.forEach(sl => sl.coverageRequested && n++));
+    return n;
+  }, [services]);
+  const openSlots = useMemo(() => {
+    let n = 0;
+    services.forEach(s => s.slots.forEach(sl => !sl.volunteer && n++));
+    return n;
+  }, [services]);
+
+  const tiles = [
+    {
+      id: "coverage",
+      ico: "bell",
+      name: "Coverage Requests",
+      desc: "Volunteers looking for substitutes",
+      badge: coverageCount > 0 ? coverageCount : null,
+    },
+    {
+      id: "volunteers",
+      ico: "user",
+      name: "Volunteers",
+      desc: `${window.TBE_DATA.VOLUNTEERS.filter(v => v.active).length} active profiles`,
+    },
+    {
+      id: "admins",
+      ico: "handshake",
+      name: "Admins",
+      desc: `${window.TBE_DATA.ADMINS.length} people with admin access`,
+    },
+    {
+      id: "email",
+      ico: "mail",
+      name: "Email Templates",
+      desc: "Reminder & confirmation messages",
+    },
+    {
+      id: "settings",
+      ico: "info",
+      name: "Settings",
+      desc: "Synagogue info & integrations",
+    },
+  ];
+
+  return (
+    <div data-screen-label="admin-hub">
+      <div className="page-head">
+        <div className="eyebrow">Admin</div>
+        <h1>Admin Hub</h1>
+        <p>Manage people, templates, and coverage requests. {openSlots} open slot{openSlots === 1 ? "" : "s"} across the year.</p>
+      </div>
+
+      <div className="hub-grid">
+        {tiles.map(t => (
+          <button key={t.id} className="hub-tile" onClick={() => onNavSub(t.id)}>
+            {t.badge && <span className="badge">{t.badge}</span>}
+            <div className="ico-wrap"><Icon name={t.ico} size={18} /></div>
+            <div className="nm">{t.name}</div>
+            <div className="desc">{t.desc}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Volunteers (admin)
+// ═══════════════════════════════════════════════════════════════
+
+function VolunteersView({ onBack }) {
+  const [volunteers, setVolunteers] = useState(window.TBE_DATA.VOLUNTEERS);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+
+  const addOne = () => {
+    if (!newName.trim() || !newEmail.trim()) return;
+    setVolunteers(v => [...v, {
+      name: newName.trim(), email: newEmail.trim(),
+      active: true, joined: new Date().toISOString().slice(0, 10), servedCount: 0,
+    }]);
+    setNewName(""); setNewEmail(""); setAdding(false);
+  };
+
+  const toggleActive = (email) => {
+    setVolunteers(v => v.map(x => x.email === email ? { ...x, active: !x.active } : x));
+  };
+  const remove = (email) => {
+    setVolunteers(v => v.filter(x => x.email !== email));
+  };
+
+  return (
+    <div data-screen-label="admin-volunteers">
+      <div className="sub-head">
+        <button className="back-btn" onClick={onBack}><Icon name="chevL" size={16} /></button>
+        <div className="page-head" style={{ flex: 1, marginBottom: 0 }}>
+          <div className="eyebrow">Admin</div>
+          <h1>Volunteers</h1>
+        </div>
+      </div>
+      <p style={{ color: "var(--c-muted)", fontSize: 14, margin: "0 0 4px" }}>
+        These profiles power assignment and look-up. Volunteers can also self-register through Sign Up.
+      </p>
+
+      <div className="people-list">
+        {volunteers.map(v => {
+          const init = (v.name[0] || "?").toUpperCase() + (v.name.split(" ")[1]?.[0] || "").toUpperCase();
+          return (
+            <div className={`person-row ${v.active ? "" : "inactive"}`} key={v.email}>
+              <div className="av">{init}</div>
+              <div className="who">
+                <div className="nm">
+                  {v.name}
+                  {!v.active && <span className="role-chip inactive">Inactive</span>}
+                </div>
+                <div className="em">{v.email}</div>
+                <div className="meta-line">
+                  Joined {new Date(v.joined + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                  {" · "}{v.servedCount} service{v.servedCount === 1 ? "" : "s"} served
+                </div>
+              </div>
+              <div className="actions">
+                <button className="slot-action" onClick={() => toggleActive(v.email)}>
+                  {v.active ? "Deactivate" : "Reactivate"}
+                </button>
+                <button className="slot-action danger" onClick={() => remove(v.email)}>Remove</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {adding ? (
+        <div className="add-row">
+          <div className="ev-row">
+            <label>Name</label>
+            <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+                   placeholder="e.g. David Adler" />
+          </div>
+          <div className="ev-row">
+            <label>Email</label>
+            <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                   placeholder="dadler@gmail.com" />
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={() => setAdding(false)}>Cancel</button>
+            <button className="btn primary" onClick={addOne} disabled={!newName.trim() || !newEmail.trim()}>
+              Add volunteer
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" onClick={() => setAdding(true)} style={{ alignSelf: "flex-start" }}>
+          <span style={{
+            width: 16, height: 16, borderRadius: "50%",
+            background: "var(--c-gold)", color: "var(--c-navy)",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, fontWeight: 700,
+          }}>+</span>
+          Add volunteer
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Admins (admin)
+// ═══════════════════════════════════════════════════════════════
+
+function AdminsView({ onBack }) {
+  const [admins, setAdmins] = useState(window.TBE_DATA.ADMINS);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+
+  const add = () => {
+    if (!newName.trim() || !newEmail.trim()) return;
+    setAdmins(a => [...a, {
+      name: newName.trim(), email: newEmail.trim(),
+      role: "Admin", joined: new Date().toISOString().slice(0, 10), source: "invited",
+    }]);
+    setNewName(""); setNewEmail(""); setAdding(false);
+  };
+  const remove = (email) => setAdmins(a => a.filter(x => x.email !== email));
+
+  return (
+    <div data-screen-label="admin-admins">
+      <div className="sub-head">
+        <button className="back-btn" onClick={onBack}><Icon name="chevL" size={16} /></button>
+        <div className="page-head" style={{ flex: 1, marginBottom: 0 }}>
+          <div className="eyebrow">Admin</div>
+          <h1>Admins</h1>
+        </div>
+      </div>
+      <p style={{ color: "var(--c-muted)", fontSize: 14, margin: "0 0 4px" }}>
+        People who can edit the schedule, manage volunteers, and send reminders. Usernames are email addresses; sign in with password or Google.
+      </p>
+
+      <div className="people-list">
+        {admins.map(a => {
+          const init = (a.name.replace(/^Rabbi\s+/, "")[0] || "?").toUpperCase()
+                     + (a.name.replace(/^Rabbi\s+/, "").split(" ")[1]?.[0] || "").toUpperCase();
+          return (
+            <div className="person-row" key={a.email}>
+              <div className="av">{init}</div>
+              <div className="who">
+                <div className="nm">
+                  {a.name}
+                  <span className={`role-chip ${a.role === "Owner" ? "owner" : "admin"}`}>{a.role}</span>
+                </div>
+                <div className="em">{a.email}</div>
+                <div className="meta-line">
+                  {a.source === "google"   ? "Signs in with Google" :
+                   a.source === "password" ? "Signs in with password" :
+                                              "Pending — invite emailed"}
+                </div>
+              </div>
+              <div className="actions">
+                {a.role !== "Owner" && (
+                  <button className="slot-action danger" onClick={() => remove(a.email)}>Remove</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {adding ? (
+        <div className="add-row">
+          <div className="ev-row">
+            <label>Name</label>
+            <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+                   placeholder="e.g. Esther Klein" />
+          </div>
+          <div className="ev-row">
+            <label>Email (becomes username)</label>
+            <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                   placeholder="eklein@tbe.org" />
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={() => setAdding(false)}>Cancel</button>
+            <button className="btn primary" onClick={add} disabled={!newName.trim() || !newEmail.trim()}>
+              Send invite
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" onClick={() => setAdding(true)} style={{ alignSelf: "flex-start" }}>
+          <span style={{
+            width: 16, height: 16, borderRadius: "50%",
+            background: "var(--c-gold)", color: "var(--c-navy)",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, fontWeight: 700,
+          }}>+</span>
+          Invite admin
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Coverage Requests (admin)
+// ═══════════════════════════════════════════════════════════════
+
+function CoverageView({ services, onBack, onAssign, onClearCoverage }) {
+  const requests = useMemo(() => {
+    const out = [];
+    services.forEach(svc => svc.slots.forEach(sl => {
+      if (sl.coverageRequested) out.push({ svc, slot: sl });
+    }));
+    return out;
+  }, [services]);
+
+  return (
+    <div data-screen-label="admin-coverage">
+      <div className="sub-head">
+        <button className="back-btn" onClick={onBack}><Icon name="chevL" size={16} /></button>
+        <div className="page-head" style={{ flex: 1, marginBottom: 0 }}>
+          <div className="eyebrow">Admin</div>
+          <h1>Coverage Requests</h1>
+        </div>
+      </div>
+      <p style={{ color: "var(--c-muted)", fontSize: 14, margin: "0 0 4px" }}>
+        Volunteers who've asked for a substitute. A note has gone out to the distribution list — assign a replacement to close it.
+      </p>
+
+      {requests.length === 0 ? (
+        <div className="empty">
+          <div className="glyph">✦</div>
+          No one needs coverage right now.
+        </div>
+      ) : (
+        <div className="cov-list">
+          {requests.map(({ svc, slot }, i) => (
+            <div className="cov-card" key={i}>
+              <div className="hd">
+                <DateBadge iso={svc.dateISO} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="who-nm">{slot.volunteer}</div>
+                  <div className="what">
+                    needs a sub for <strong style={{ color: "var(--c-ink)" }}>{slot.role}</strong> at <strong style={{ color: "var(--c-ink)" }}>{svc.type}</strong>
+                  </div>
+                  <div className="what">
+                    {svc.date.split(",")[0]} · {svc.time}{slot.timeSlot ? ` · ${slot.timeSlot}` : ""}
+                  </div>
+                  <div className="since">Distribution list notified</div>
+                </div>
+              </div>
+              <div className="body">
+                <button className="slot-action primary" onClick={() => onAssign(svc, slot)}>
+                  Assign substitute
+                </button>
+                <button className="slot-action" onClick={() => onClearCoverage(svc.id, slot.id)}>
+                  Mark resolved
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Settings (admin)
+// ═══════════════════════════════════════════════════════════════
+
+function SettingsView({ onBack }) {
+  const S = window.TBE_DATA.SYNAGOGUE;
+  const [years, setYears] = useState([2026, 2027, 2028]);
+  const [selectedYear, setSelectedYear] = useState(2026);
+
+  return (
+    <div data-screen-label="admin-settings">
+      <div className="sub-head">
+        <button className="back-btn" onClick={onBack}><Icon name="chevL" size={16} /></button>
+        <div className="page-head" style={{ flex: 1, marginBottom: 0 }}>
+          <div className="eyebrow">Admin</div>
+          <h1>Settings</h1>
+        </div>
+      </div>
+
+      <div className="set-section">
+        <div className="sect-hd">Synagogue</div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Name</div>
+            <div className="v">{S.name}</div>
+          </div>
+          <button className="slot-action">Edit</button>
+        </div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Address</div>
+            <div className="v">{S.address}</div>
+          </div>
+          <button className="slot-action">Edit</button>
+        </div>
+      </div>
+
+      <div className="set-section">
+        <div className="sect-hd">Default service times</div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Friday Kabbalat Shabbat</div>
+            <div className="v">{S.defaultFridayTime} · 1 Greeter</div>
+          </div>
+          <button className="slot-action">Edit</button>
+        </div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Saturday Shabbat Morning</div>
+            <div className="v">{S.defaultSaturdayTime} · 1 Greeter</div>
+          </div>
+          <button className="slot-action">Edit</button>
+        </div>
+      </div>
+
+      <div className="set-section">
+        <div className="sect-hd">Reminders</div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Weekly reminder</div>
+            <div className="v">{S.reminderDay}s at {S.reminderHour}</div>
+          </div>
+          <button className="slot-action">Edit</button>
+        </div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Confirmation reminder</div>
+            <div className="v">48 hours before each service</div>
+          </div>
+          <button className="slot-action">Edit</button>
+        </div>
+      </div>
+
+      <div className="set-section">
+        <div className="sect-hd">Integrations</div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Gmail</div>
+            <div className="v connected">Connected · {S.integrations.gmail.account}</div>
+          </div>
+          <button className="slot-action">Manage</button>
+        </div>
+        <div className="set-row">
+          <div className="l">
+            <div className="k">Google Calendar</div>
+            <div className="v connected">Connected · {S.integrations.gcal.account}</div>
+          </div>
+          <button className="slot-action">Manage</button>
+        </div>
+      </div>
+
+      <div className="set-section">
+        <div className="sect-hd">Calendar horizon</div>
+        <div className="set-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+          <div className="l" style={{ width: "100%" }}>
+            <div className="k">Years staged</div>
+            <div className="v" style={{ marginTop: 8 }}>
+              <div className="year-bar">
+                {years.map(y => (
+                  <button key={y} className="year-pill"
+                          aria-pressed={y === selectedYear}
+                          onClick={() => setSelectedYear(y)}>
+                    {y}
+                  </button>
+                ))}
+                <button className="year-pill add"
+                        onClick={() => setYears([...years, years[years.length - 1] + 1])}>
+                  + Add {years[years.length - 1] + 1}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--c-muted)" }}>
+            We pre-stage holidays and weekly Shabbat dates for the years above. Add another year as you approach the end of the horizon.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, {
+  AdminHubView, VolunteersView, AdminsView, CoverageView, SettingsView,
+});
