@@ -1,5 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import Anthropic from '@anthropic-ai/sdk';
 
 interface SlotInfo {
   id: string;
@@ -48,9 +47,8 @@ SLOT TEMPLATES by service type:
 - High Holiday (Rosh Hashanah / Yom Kippur): 4 Greeters (8:30 AM, 9:00 AM, 9:30 AM, 10:00 AM), 2 Ushers, 2 Parking Attendants
 - Custom: use whatever slots the admin specifies
 
-When creating a service, generate a sensible slot layout based on the service type unless the admin specifies otherwise. Use sequential slot IDs like "s101", "s102", etc.
-
-Only call create_service when the admin clearly intends to add a service. Confirm details conversationally before calling the tool if any key information is missing.`;
+When creating a service, generate a sensible slot layout. Use sequential slot IDs like "s101", "s102" etc.
+Only call create_service when the admin clearly intends to add a service.`;
   }
 
   const userName = user?.name ?? 'the volunteer';
@@ -89,20 +87,20 @@ ${svcLines || '(no services)'}
 
 Guidelines:
 - Only call sign_me_up if the user clearly wants to sign up for a specific slot.
-- Only call request_coverage if the user wants to find a substitute for a slot they're already in.
-- Never sign up someone who is already in that slot.
+- Only call request_coverage if the user wants a substitute for a slot they're already in.
+- Never sign up someone already in that slot.
 - Be warm, concise, and helpful.`;
 }
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS = [
   {
     name: 'sign_me_up',
     description: 'Sign the current volunteer up for a specific open slot in a service.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
-        svcId: { type: 'string', description: 'Service ID (as a string)' },
-        slotId: { type: 'string', description: 'Slot ID within the service' },
+        svcId: { type: 'string' },
+        slotId: { type: 'string' },
       },
       required: ['svcId', 'slotId'],
     },
@@ -111,10 +109,10 @@ const TOOLS: Anthropic.Tool[] = [
     name: 'request_coverage',
     description: 'Request a substitute for a slot the user is already signed up for.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
-        svcId: { type: 'string', description: 'Service ID (as a string)' },
-        slotId: { type: 'string', description: 'Slot ID within the service' },
+        svcId: { type: 'string' },
+        slotId: { type: 'string' },
       },
       required: ['svcId', 'slotId'],
     },
@@ -123,16 +121,16 @@ const TOOLS: Anthropic.Tool[] = [
     name: 'create_service',
     description: 'Create a new service and add it to the calendar.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         service: {
           type: 'object',
           properties: {
             id: { type: 'string' },
-            dateISO: { type: 'string', description: 'YYYY-MM-DD' },
-            date: { type: 'string', description: 'e.g. "Saturday, May 31"' },
-            time: { type: 'string', description: 'e.g. "9:30 AM"' },
-            type: { type: 'string', description: 'e.g. "Shabbat Morning"' },
+            dateISO: { type: 'string' },
+            date: { type: 'string' },
+            time: { type: 'string' },
+            type: { type: 'string' },
             isHH: { type: 'boolean' },
             slots: {
               type: 'array',
@@ -165,11 +163,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: 'ANTHROPIC_API_KEY environment variable is not set' });
+    res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' });
     return;
   }
-
-  const anthropic = new Anthropic({ apiKey });
 
   const { message, role, user, services } = req.body as {
     message: string;
@@ -193,50 +189,87 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const systemPrompt = buildSystemPrompt(role, user, services);
     const tools = role === 'volunteer' ? TOOLS.filter(t => t.name !== 'create_service') : TOOLS;
 
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      tools,
-      messages: [{ role: 'user', content: message }],
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        stream: true,
+        system: systemPrompt,
+        tools,
+        messages: [{ role: 'user', content: message }],
+      }),
     });
 
+    if (!anthropicRes.ok) {
+      const errText = await anthropicRes.text();
+      send({ type: 'error', message: `Anthropic API error ${anthropicRes.status}: ${errText}` });
+      res.end();
+      return;
+    }
+
+    const reader = anthropicRes.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
     let currentToolName: string | null = null;
     let currentToolInput = '';
 
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_start') {
-        if (chunk.content_block.type === 'tool_use') {
-          currentToolName = chunk.content_block.name;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) continue;
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (!raw || raw === '[DONE]') continue;
+
+        let evt: Record<string, unknown>;
+        try { evt = JSON.parse(raw); } catch { continue; }
+
+        if (evt.type === 'content_block_start') {
+          const cb = evt.content_block as Record<string, unknown>;
+          if (cb?.type === 'tool_use') {
+            currentToolName = cb.name as string;
+            currentToolInput = '';
+          }
+        } else if (evt.type === 'content_block_delta') {
+          const delta = evt.delta as Record<string, unknown>;
+          if (delta?.type === 'text_delta') {
+            send({ type: 'text', delta: delta.text });
+          } else if (delta?.type === 'input_json_delta' && currentToolName) {
+            currentToolInput += delta.partial_json as string;
+          }
+        } else if (evt.type === 'content_block_stop' && currentToolName) {
+          try {
+            const input = JSON.parse(currentToolInput) as Record<string, unknown>;
+            if (currentToolName === 'sign_me_up') {
+              send({ type: 'tool_action', action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
+            } else if (currentToolName === 'request_coverage') {
+              send({ type: 'tool_action', action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
+            } else if (currentToolName === 'create_service') {
+              send({ type: 'tool_action', action: 'create_service', service: input.service });
+            }
+          } catch { /* malformed */ }
+          currentToolName = null;
           currentToolInput = '';
         }
-      } else if (chunk.type === 'content_block_delta') {
-        if (chunk.delta.type === 'text_delta') {
-          send({ type: 'text', delta: chunk.delta.text });
-        } else if (chunk.delta.type === 'input_json_delta' && currentToolName) {
-          currentToolInput += chunk.delta.partial_json;
-        }
-      } else if (chunk.type === 'content_block_stop' && currentToolName) {
-        try {
-          const input = JSON.parse(currentToolInput);
-          if (currentToolName === 'sign_me_up') {
-            send({ type: 'tool_action', action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
-          } else if (currentToolName === 'request_coverage') {
-            send({ type: 'tool_action', action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
-          } else if (currentToolName === 'create_service') {
-            send({ type: 'tool_action', action: 'create_service', service: input.service });
-          }
-        } catch { /* malformed tool input */ }
-        currentToolName = null;
-        currentToolInput = '';
       }
     }
 
     send({ type: 'done' });
     res.end();
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    send({ type: 'error', message });
+    const msg = err instanceof Error ? err.message : String(err);
+    send({ type: 'error', message: msg });
     res.end();
   }
 }
