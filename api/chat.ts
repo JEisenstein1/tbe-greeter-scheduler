@@ -1,8 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
 interface SlotInfo {
   id: string;
   role: string;
@@ -164,6 +162,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    res.status(500).json({ error: 'ANTHROPIC_API_KEY environment variable is not set' });
+    return;
+  }
+
+  const anthropic = new Anthropic({ apiKey });
 
   const { message, role, user, services } = req.body as {
     message: string;
