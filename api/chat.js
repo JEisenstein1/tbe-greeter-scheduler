@@ -1,27 +1,4 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-interface SlotInfo {
-  id: string;
-  role: string;
-  timeSlot: string | null;
-  volunteer: string | null;
-}
-
-interface ServiceInfo {
-  id: string | number;
-  dateISO: string;
-  date: string;
-  time: string;
-  type: string;
-  isHH: boolean;
-  slots: SlotInfo[];
-}
-
-function buildSystemPrompt(
-  role: 'admin' | 'volunteer',
-  user: { name: string; email: string } | null,
-  services: ServiceInfo[],
-): string {
+function buildSystemPrompt(role, user, services) {
   const today = new Date().toISOString().slice(0, 10);
 
   const svcLines = services.map(s => {
@@ -96,26 +73,12 @@ const TOOLS = [
   {
     name: 'sign_me_up',
     description: 'Sign the current volunteer up for a specific open slot in a service.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        svcId: { type: 'string' },
-        slotId: { type: 'string' },
-      },
-      required: ['svcId', 'slotId'],
-    },
+    input_schema: { type: 'object', properties: { svcId: { type: 'string' }, slotId: { type: 'string' } }, required: ['svcId', 'slotId'] },
   },
   {
     name: 'request_coverage',
     description: 'Request a substitute for a slot the user is already signed up for.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        svcId: { type: 'string' },
-        slotId: { type: 'string' },
-      },
-      required: ['svcId', 'slotId'],
-    },
+    input_schema: { type: 'object', properties: { svcId: { type: 'string' }, slotId: { type: 'string' } }, required: ['svcId', 'slotId'] },
   },
   {
     name: 'create_service',
@@ -126,19 +89,14 @@ const TOOLS = [
         service: {
           type: 'object',
           properties: {
-            id: { type: 'string' },
-            dateISO: { type: 'string' },
-            date: { type: 'string' },
-            time: { type: 'string' },
-            type: { type: 'string' },
-            isHH: { type: 'boolean' },
+            id: { type: 'string' }, dateISO: { type: 'string' }, date: { type: 'string' },
+            time: { type: 'string' }, type: { type: 'string' }, isHH: { type: 'boolean' },
             slots: {
               type: 'array',
               items: {
                 type: 'object',
                 properties: {
-                  id: { type: 'string' },
-                  role: { type: 'string' },
+                  id: { type: 'string' }, role: { type: 'string' },
                   timeSlot: { type: ['string', 'null'] },
                   volunteer: { type: ['string', 'null'] },
                   volunteerEmail: { type: ['string', 'null'] },
@@ -155,7 +113,7 @@ const TOOLS = [
   },
 ];
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
     return;
@@ -167,12 +125,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const { message, role, user, services } = req.body as {
-    message: string;
-    role: 'admin' | 'volunteer';
-    user: { name: string; email: string } | null;
-    services: ServiceInfo[];
-  };
+  const { message, role, user, services } = req.body;
 
   if (!message?.trim()) {
     res.status(400).json({ error: 'message required' });
@@ -183,7 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
   try {
     const systemPrompt = buildSystemPrompt(role, user, services);
@@ -208,15 +161,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!anthropicRes.ok) {
       const errText = await anthropicRes.text();
-      send({ type: 'error', message: `Anthropic API error ${anthropicRes.status}: ${errText}` });
+      send({ type: 'error', message: `Anthropic API ${anthropicRes.status}: ${errText}` });
       res.end();
       return;
     }
 
-    const reader = anthropicRes.body!.getReader();
+    const reader = anthropicRes.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let currentToolName: string | null = null;
+    let currentToolName = null;
     let currentToolInput = '';
 
     while (true) {
@@ -232,25 +185,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const raw = line.slice(6).trim();
         if (!raw || raw === '[DONE]') continue;
 
-        let evt: Record<string, unknown>;
+        let evt;
         try { evt = JSON.parse(raw); } catch { continue; }
 
         if (evt.type === 'content_block_start') {
-          const cb = evt.content_block as Record<string, unknown>;
-          if (cb?.type === 'tool_use') {
-            currentToolName = cb.name as string;
+          if (evt.content_block?.type === 'tool_use') {
+            currentToolName = evt.content_block.name;
             currentToolInput = '';
           }
         } else if (evt.type === 'content_block_delta') {
-          const delta = evt.delta as Record<string, unknown>;
-          if (delta?.type === 'text_delta') {
-            send({ type: 'text', delta: delta.text });
-          } else if (delta?.type === 'input_json_delta' && currentToolName) {
-            currentToolInput += delta.partial_json as string;
+          if (evt.delta?.type === 'text_delta') {
+            send({ type: 'text', delta: evt.delta.text });
+          } else if (evt.delta?.type === 'input_json_delta' && currentToolName) {
+            currentToolInput += evt.delta.partial_json;
           }
         } else if (evt.type === 'content_block_stop' && currentToolName) {
           try {
-            const input = JSON.parse(currentToolInput) as Record<string, unknown>;
+            const input = JSON.parse(currentToolInput);
             if (currentToolName === 'sign_me_up') {
               send({ type: 'tool_action', action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
             } else if (currentToolName === 'request_coverage') {
@@ -267,9 +218,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     send({ type: 'done' });
     res.end();
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    send({ type: 'error', message: msg });
+  } catch (err) {
+    send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     res.end();
   }
 }
