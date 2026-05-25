@@ -108,7 +108,10 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
         signal: abortRef.current.signal,
       });
 
-      if (!response.ok) throw new Error('API error');
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+      }
 
       setTyping(false);
       setStreamText('');
@@ -197,7 +200,8 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       setTyping(false);
-      setMessages(m => [...m, { role: 'ai', text: "Sorry, I couldn't reach the AI assistant. Check your API key and try again.", card: null }]);
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages(m => [...m, { role: 'ai', text: `Error: ${msg}`, card: null }]);
     } finally {
       setIsStreaming(false);
     }
