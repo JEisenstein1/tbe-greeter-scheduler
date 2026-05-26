@@ -182,13 +182,16 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
       </div>
 
       <div className="chat" ref={scrollRef}>
-        {messages.map((m, i) => (
-          <div className={`bubble ${m.role}`} key={i}>
-            {m.role === 'ai' && <div className="ai-meta">Assistant</div>}
-            <div>{m.text}</div>
-            {m.card && <ActionCard card={m.card} />}
-          </div>
-        ))}
+        {messages.map((m, i) => {
+          if (!m.text && !m.card) return null;
+          return (
+            <div className={`bubble ${m.role}`} key={i}>
+              {m.role === 'ai' && <div className="ai-meta">Assistant</div>}
+              {m.text && <div>{m.text}</div>}
+              {m.card && <ActionCard card={m.card} />}
+            </div>
+          );
+        })}
         {typing && (
           <div className="bubble ai">
             <div className="ai-meta">Assistant</div>

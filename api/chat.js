@@ -88,29 +88,27 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        service: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' }, dateISO: { type: 'string' }, date: { type: 'string' },
-            time: { type: 'string' }, type: { type: 'string' }, isHH: { type: 'boolean' },
-            slots: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string' }, role: { type: 'string' },
-                  timeSlot: { type: ['string', 'null'] },
-                  volunteer: { type: ['string', 'null'] },
-                  volunteerEmail: { type: ['string', 'null'] },
-                },
-                required: ['id', 'role', 'timeSlot', 'volunteer', 'volunteerEmail'],
-              },
+        id: { type: 'string', description: 'Unique ID e.g. "svc-20260607"' },
+        dateISO: { type: 'string', description: 'YYYY-MM-DD' },
+        date: { type: 'string', description: 'e.g. "Saturday, June 7"' },
+        time: { type: 'string', description: 'e.g. "9:30 AM"' },
+        type: { type: 'string', description: 'e.g. "Shabbat Morning"' },
+        isHH: { type: 'boolean' },
+        slots: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' }, role: { type: 'string' },
+              timeSlot: { type: ['string', 'null'] },
+              volunteer: { type: ['string', 'null'] },
+              volunteerEmail: { type: ['string', 'null'] },
             },
+            required: ['id', 'role', 'timeSlot', 'volunteer', 'volunteerEmail'],
           },
-          required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots'],
         },
       },
-      required: ['service'],
+      required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots'],
     },
   },
 ];
@@ -180,7 +178,7 @@ export default async function handler(req) {
         } else if (block.name === 'request_coverage') {
           actions.push({ action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
         } else if (block.name === 'create_service') {
-          actions.push({ action: 'create_service', service: input.service });
+          actions.push({ action: 'create_service', service: input });
         }
       }
     }
