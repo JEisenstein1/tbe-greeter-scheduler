@@ -137,106 +137,61 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ error: 'message required' }), { status: 400 });
   }
 
-  const encoder = new TextEncoder();
-  const { readable, writable } = new TransformStream();
-  const writer = writable.getWriter();
+  try {
+    const systemPrompt = buildSystemPrompt(role, user, services);
+    const tools = role === 'volunteer' ? TOOLS.filter(t => t.name !== 'create_service') : TOOLS;
 
-  const send = async (data) => {
-    await writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-  };
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        tools,
+        messages: [{ role: 'user', content: message }],
+      }),
+    });
 
-  (async () => {
-    try {
-      const systemPrompt = buildSystemPrompt(role, user, services);
-      const tools = role === 'volunteer' ? TOOLS.filter(t => t.name !== 'create_service') : TOOLS;
-
-      const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1024,
-          stream: true,
-          system: systemPrompt,
-          tools,
-          messages: [{ role: 'user', content: message }],
-        }),
+    if (!anthropicRes.ok) {
+      const errText = await anthropicRes.text();
+      return new Response(JSON.stringify({ error: `Anthropic API ${anthropicRes.status}: ${errText}` }), {
+        status: 502, headers: { 'Content-Type': 'application/json' },
       });
+    }
 
-      if (!anthropicRes.ok) {
-        const errText = await anthropicRes.text();
-        await send({ type: 'error', message: `Anthropic API ${anthropicRes.status}: ${errText}` });
-        await writer.close();
-        return;
-      }
+    const data = await anthropicRes.json();
 
-      const reader = anthropicRes.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let currentToolName = null;
-      let currentToolInput = '';
+    // Extract text and tool actions from response
+    let text = '';
+    const actions = [];
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (line.startsWith('event:')) continue;
-          if (!line.startsWith('data: ')) continue;
-          const raw = line.slice(6).trim();
-          if (!raw || raw === '[DONE]') continue;
-
-          let evt;
-          try { evt = JSON.parse(raw); } catch { continue; }
-
-          if (evt.type === 'content_block_start') {
-            if (evt.content_block?.type === 'tool_use') {
-              currentToolName = evt.content_block.name;
-              currentToolInput = '';
-            }
-          } else if (evt.type === 'content_block_delta') {
-            if (evt.delta?.type === 'text_delta') {
-              await send({ type: 'text', delta: evt.delta.text });
-            } else if (evt.delta?.type === 'input_json_delta' && currentToolName) {
-              currentToolInput += evt.delta.partial_json;
-            }
-          } else if (evt.type === 'content_block_stop' && currentToolName) {
-            try {
-              const input = JSON.parse(currentToolInput);
-              if (currentToolName === 'sign_me_up') {
-                await send({ type: 'tool_action', action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
-              } else if (currentToolName === 'request_coverage') {
-                await send({ type: 'tool_action', action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
-              } else if (currentToolName === 'create_service') {
-                await send({ type: 'tool_action', action: 'create_service', service: input.service });
-              }
-            } catch { /* malformed */ }
-            currentToolName = null;
-            currentToolInput = '';
-          }
+    for (const block of data.content ?? []) {
+      if (block.type === 'text') {
+        text += block.text;
+      } else if (block.type === 'tool_use') {
+        const input = block.input ?? {};
+        if (block.name === 'sign_me_up') {
+          actions.push({ action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
+        } else if (block.name === 'request_coverage') {
+          actions.push({ action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
+        } else if (block.name === 'create_service') {
+          actions.push({ action: 'create_service', service: input.service });
         }
       }
-
-      await send({ type: 'done' });
-    } catch (err) {
-      await send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      await writer.close();
     }
-  })();
 
-  return new Response(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+    return new Response(JSON.stringify({ text, actions }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+      status: 500, headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }

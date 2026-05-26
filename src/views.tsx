@@ -91,18 +91,9 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
           role: effectiveRole,
           user: user ? { name: user.name, email: user.email } : null,
           services: services.map(s => ({
-            id: s.id,
-            dateISO: s.dateISO,
-            date: s.date,
-            time: s.time,
-            type: s.type,
-            isHH: s.isHH,
-            slots: s.slots.map(sl => ({
-              id: sl.id,
-              role: sl.role,
-              timeSlot: sl.timeSlot,
-              volunteer: sl.volunteer,
-            })),
+            id: s.id, dateISO: s.dateISO, date: s.date, time: s.time,
+            type: s.type, isHH: s.isHH,
+            slots: s.slots.map(sl => ({ id: sl.id, role: sl.role, timeSlot: sl.timeSlot, volunteer: sl.volunteer })),
           })),
         }),
         signal: abortRef.current.signal,
@@ -113,90 +104,36 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
         throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
       }
 
-      setTyping(false);
-      setStreamText('');
-      setStreamCard(null);
+      const data = await response.json() as { text: string; actions: { action: string; svcId?: string; slotId?: string; service?: Service }[]; error?: string };
 
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let fullText = '';
+      if (data.error) throw new Error(data.error);
+
+      setTyping(false);
+
       let finalCard: ActionCard | null = null;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const raw = line.slice(6).trim();
-          if (!raw) continue;
-          try {
-            const event = JSON.parse(raw) as SSEEvent;
-            if (event.type === 'text') {
-              fullText += event.delta;
-              setStreamText(fullText);
-            } else if (event.type === 'tool_action') {
-              if (event.action === 'sign_me_up') {
-                onAIVolunteerSignup(event.svcId, event.slotId, { name: user!.name, email: user!.email });
-                const svc = services.find(s => String(s.id) === String(event.svcId));
-                const slot = svc?.slots.find(sl => sl.id === event.slotId);
-                if (svc && slot) {
-                  finalCard = {
-                    title: svc.type,
-                    rows: [
-                      ['When', `${svc.date} · ${svc.time}`],
-                      ['Role', slot.role],
-                      ['You', `${user!.name} · ${user!.email}`],
-                      ['', '✓ Confirmation sent'],
-                    ],
-                  };
-                  setStreamCard(finalCard);
-                }
-              } else if (event.action === 'request_coverage') {
-                onAIRequestCoverage(event.svcId, event.slotId);
-                const svc = services.find(s => String(s.id) === String(event.svcId));
-                const slot = svc?.slots.find(sl => sl.id === event.slotId);
-                if (svc && slot) {
-                  finalCard = {
-                    title: 'Looking for a substitute',
-                    rows: [
-                      ['Event', `${svc.type} · ${svc.date}`],
-                      ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`],
-                      ['Status', 'Coverage requested — admin & list notified'],
-                    ],
-                  };
-                  setStreamCard(finalCard);
-                }
-              } else if (event.action === 'create_service') {
-                onAICreateService(event.service);
-                finalCard = {
-                  title: event.service.type,
-                  rows: [
-                    ['Date', event.service.date],
-                    ['Time', event.service.time],
-                    ['Slots', `${event.service.slots.length} total`],
-                  ],
-                };
-                setStreamCard(finalCard);
-              }
-            } else if (event.type === 'done') {
-              break;
-            } else if (event.type === 'error') {
-              throw new Error(event.message);
-            }
-          } catch {
-            // skip malformed events
+      for (const act of data.actions ?? []) {
+        if (act.action === 'sign_me_up' && act.svcId && act.slotId) {
+          onAIVolunteerSignup(act.svcId, act.slotId, { name: user!.name, email: user!.email });
+          const svc = services.find(s => String(s.id) === String(act.svcId));
+          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+          if (svc && slot) {
+            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], ['You', `${user!.name} · ${user!.email}`], ['', '✓ Confirmation sent']] };
           }
+        } else if (act.action === 'request_coverage' && act.svcId && act.slotId) {
+          onAIRequestCoverage(act.svcId, act.slotId);
+          const svc = services.find(s => String(s.id) === String(act.svcId));
+          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+          if (svc && slot) {
+            finalCard = { title: 'Looking for a substitute', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Coverage requested — admin notified']] };
+          }
+        } else if (act.action === 'create_service' && act.service) {
+          onAICreateService(act.service);
+          finalCard = { title: act.service.type, rows: [['Date', act.service.date], ['Time', act.service.time], ['Slots', `${act.service.slots.length} total`]] };
         }
       }
 
-      setMessages(m => [...m, { role: 'ai', text: fullText, card: finalCard }]);
-      setStreamText('');
-      setStreamCard(null);
+      setMessages(m => [...m, { role: 'ai', text: data.text, card: finalCard }]);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       setTyping(false);
