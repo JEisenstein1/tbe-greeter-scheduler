@@ -1,25 +1,62 @@
-# CODING AGENTS: READ THIS FIRST
+# Temple Beth El — Greeter Scheduler
 
-This is a **handoff bundle** from Claude Design (claude.ai/design).
+A mobile-first volunteer scheduling web app for Temple Beth El's greeter and usher program. Built with Vite + React + TypeScript, deployed on Vercel, with an AI scheduling assistant powered by the Anthropic API.
 
-A user mocked up designs in HTML/CSS/JS using an AI design tool, then exported this bundle so a coding agent can implement the designs for real.
+**Live app:** https://tbe-greeter-scheduler.vercel.app
 
-## What you should do — IMPORTANT
+## Features
 
-**Read the chat transcripts first.** There are 1 chat transcript(s) in `chats/`. The transcripts show the full back-and-forth between the user and the design assistant — they tell you **what the user actually wants** and **where they landed** after iterating. Don't skip them. The final HTML files are the output, but the chat is where the intent lives.
+- **AI Scheduling Assistant** — chat with Claude to add services, sign up for slots, or request coverage
+- **Admin view** — calendar management, slot assignment, volunteer/admin roster, coverage requests
+- **Volunteer view** — sign up for services, view your upcoming dates, request substitutes
+- **Role-based auth** — mock Google sign-in; email matched against seeded admin/volunteer lists
+- **Theme system** — four color palettes, three density modes, four heading fonts via Tweaks panel
 
-**Read `project/Greeter Scheduler.html` in full.** The user had this file open when they triggered the handoff, so it's almost certainly the primary design they want built. Read it top to bottom — don't skim. Then **follow its imports**: open every file it pulls in (shared components, CSS, scripts) so you understand how the pieces fit together before you start implementing.
+## Tech stack
 
-**If anything is ambiguous, ask the user to confirm before you start implementing.** It's much cheaper to clarify scope up front than to build the wrong thing.
+| Layer | Choice |
+|---|---|
+| Frontend | Vite 6 + React 19 + TypeScript |
+| API | Vercel Edge Function (`api/chat.js`) |
+| AI | Anthropic API — `claude-sonnet-4-6` |
+| Deployment | Vercel (auto-deploy from `main`) |
+| Fonts | Google Fonts — Playfair Display, DM Sans, + 3 alternates |
 
-## About the design files
+## Local development
 
-The design medium is **HTML/CSS/JS** — these are prototypes, not production code. Your job is to **recreate them pixel-perfectly** in whatever technology makes sense for the target codebase (React, Vue, native, whatever fits). Match the visual output; don't copy the prototype's internal structure unless it happens to fit.
+```bash
+cp .env.example .env
+# Add your ANTHROPIC_API_KEY to .env
 
-**Don't render these files in a browser or take screenshots unless the user asks you to.** Everything you need — dimensions, colors, layout rules — is spelled out in the source. Read the HTML and CSS directly; a screenshot won't tell you anything they don't.
+npm install
+npm run dev
+# Vite: http://localhost:5173
+# Express API: http://localhost:3001
+```
 
-## Bundle contents
+## Deployment
 
-- `README.md` — this file
-- `chats/` — conversation transcripts (read these!)
-- `project/` — the `TBE Greeter` project files (HTML prototypes, assets, components)
+Push to `main` → Vercel auto-deploys. Requires `ANTHROPIC_API_KEY` set in Vercel project settings.
+
+## Project structure
+
+```
+src/
+  App.tsx          # Root component — state, routing, all handlers
+  types.ts         # Shared TypeScript types
+  data.ts          # Seed data — volunteers, admins, initial services
+  helpers.ts       # Pure utility functions
+  styles.css       # All styles (~700 lines)
+  components.tsx   # Shared UI — Topbar, BotNav, modals, auth sheet
+  views.tsx        # Page views — AI chat, Calendar, SignUp, Admin, etc.
+  TweaksPanel.tsx  # Draggable theme/behavior tweaks panel
+  main.tsx         # React entry point
+
+api/
+  chat.js          # Vercel Edge Function — Anthropic API proxy
+
+server/
+  index.ts         # Local Express dev server (mirrors api/chat.js)
+
+project/           # Original Claude Design prototype files (reference only)
+```
