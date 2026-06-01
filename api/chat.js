@@ -147,7 +147,7 @@ export default async function handler(req) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
         max_tokens: 1024,
         system: systemPrompt,
         tools,
@@ -156,8 +156,8 @@ export default async function handler(req) {
     });
 
     if (!anthropicRes.ok) {
-      const errText = await anthropicRes.text();
-      return new Response(JSON.stringify({ error: `Anthropic API ${anthropicRes.status}: ${errText}` }), {
+      console.error('Anthropic API error', anthropicRes.status, await anthropicRes.text());
+      return new Response(JSON.stringify({ error: `Anthropic API request failed (${anthropicRes.status})` }), {
         status: 502, headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -188,7 +188,8 @@ export default async function handler(req) {
     });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+    console.error('Chat endpoint error', err);
+    return new Response(JSON.stringify({ error: 'Chat endpoint failed' }), {
       status: 500, headers: { 'Content-Type': 'application/json' },
     });
   }

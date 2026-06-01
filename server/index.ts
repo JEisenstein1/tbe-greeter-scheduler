@@ -1,13 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import Anthropic from '@anthropic-ai/sdk';
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -111,7 +108,7 @@ Guidelines:
 
 // ── Tools ─────────────────────────────────────────────────────
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS = [
   {
     name: 'sign_me_up',
     description: 'Sign the current volunteer up for a specific open slot in a service.',
@@ -142,48 +139,40 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        service: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', description: 'Unique ID for the service' },
-            dateISO: { type: 'string', description: 'Date in YYYY-MM-DD format' },
-            date: { type: 'string', description: 'Human-readable date, e.g. "Saturday, May 31"' },
-            time: { type: 'string', description: 'Time string, e.g. "9:30 AM"' },
-            type: { type: 'string', description: 'Service type, e.g. "Shabbat Morning"' },
-            isHH: { type: 'boolean', description: 'True if this is a High Holiday service' },
-            slots: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string' },
-                  role: { type: 'string', description: 'Role name, e.g. "Greeter", "Usher"' },
-                  timeSlot: { type: ['string', 'null'], description: 'Optional time sub-slot, e.g. "9:30 AM"' },
-                  volunteer: { type: ['string', 'null'] },
-                  volunteerEmail: { type: ['string', 'null'] },
-                },
-                required: ['id', 'role', 'timeSlot', 'volunteer', 'volunteerEmail'],
-              },
+        id: { type: 'string', description: 'Unique ID for the service' },
+        dateISO: { type: 'string', description: 'Date in YYYY-MM-DD format' },
+        date: { type: 'string', description: 'Human-readable date, e.g. "Saturday, May 31"' },
+        time: { type: 'string', description: 'Time string, e.g. "9:30 AM"' },
+        type: { type: 'string', description: 'Service type, e.g. "Shabbat Morning"' },
+        isHH: { type: 'boolean', description: 'True if this is a High Holiday service' },
+        slots: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              role: { type: 'string', description: 'Role name, e.g. "Greeter", "Usher"' },
+              timeSlot: { type: ['string', 'null'], description: 'Optional time sub-slot, e.g. "9:30 AM"' },
+              volunteer: { type: ['string', 'null'] },
+              volunteerEmail: { type: ['string', 'null'] },
             },
+            required: ['id', 'role', 'timeSlot', 'volunteer', 'volunteerEmail'],
           },
-          required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots'],
         },
       },
-      required: ['service'],
+      required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots'],
     },
   },
 ];
 
-// ── SSE helper ────────────────────────────────────────────────
-
-function send(res: express.Response, data: object) {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
 // ── Chat endpoint ─────────────────────────────────────────────
 
+function jsonError(res: express.Response, status: number, error: string) {
+  res.status(status).json({ error });
+}
+
 app.post('/api/chat', async (req, res) => {
-  const { message, role, user, services } = req.body as {
+  const { message, role, user, services = [] } = req.body as {
     message: string;
     role: 'admin' | 'volunteer';
     user: { name: string; email: string } | null;
@@ -191,65 +180,64 @@ app.post('/api/chat', async (req, res) => {
   };
 
   if (!message?.trim()) {
-    res.status(400).json({ error: 'message required' });
+    jsonError(res, 400, 'message required');
     return;
   }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    jsonError(res, 500, 'ANTHROPIC_API_KEY is not set');
+    return;
+  }
 
   try {
     const systemPrompt = buildSystemPrompt(role, user, services);
-
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      tools: role === 'volunteer' ? TOOLS.filter(t => t.name !== 'create_service') : TOOLS,
-      messages: [{ role: 'user', content: message }],
+    const tools = role === 'volunteer' ? TOOLS.filter(t => t.name !== 'create_service') : TOOLS;
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        tools,
+        messages: [{ role: 'user', content: message }],
+      }),
     });
 
-    let currentToolName: string | null = null;
-    let currentToolInput = '';
+    if (!anthropicRes.ok) {
+      console.error('Anthropic API error', anthropicRes.status, await anthropicRes.text());
+      jsonError(res, 502, `Anthropic API request failed (${anthropicRes.status})`);
+      return;
+    }
 
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_start') {
-        if (chunk.content_block.type === 'tool_use') {
-          currentToolName = chunk.content_block.name;
-          currentToolInput = '';
+    const data = await anthropicRes.json() as { content?: Array<any> };
+    let text = '';
+    const actions: Array<Record<string, unknown>> = [];
+
+    for (const block of data.content ?? []) {
+      if (block.type === 'text') {
+        text += block.text;
+      } else if (block.type === 'tool_use') {
+        const input = block.input ?? {};
+        if (block.name === 'sign_me_up') {
+          actions.push({ action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
+        } else if (block.name === 'request_coverage') {
+          actions.push({ action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
+        } else if (block.name === 'create_service') {
+          actions.push({ action: 'create_service', service: input });
         }
-      } else if (chunk.type === 'content_block_delta') {
-        if (chunk.delta.type === 'text_delta') {
-          send(res, { type: 'text', delta: chunk.delta.text });
-        } else if (chunk.delta.type === 'input_json_delta' && currentToolName) {
-          currentToolInput += chunk.delta.partial_json;
-        }
-      } else if (chunk.type === 'content_block_stop' && currentToolName) {
-        try {
-          const input = JSON.parse(currentToolInput);
-          if (currentToolName === 'sign_me_up') {
-            send(res, { type: 'tool_action', action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
-          } else if (currentToolName === 'request_coverage') {
-            send(res, { type: 'tool_action', action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
-          } else if (currentToolName === 'create_service') {
-            send(res, { type: 'tool_action', action: 'create_service', service: input.service });
-          }
-        } catch {
-          // malformed tool input — skip
-        }
-        currentToolName = null;
-        currentToolInput = '';
       }
     }
 
-    send(res, { type: 'done' });
-    res.end();
+    res.json({ text, actions });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    send(res, { type: 'error', message });
-    res.end();
+    console.error('Chat endpoint error', err);
+    jsonError(res, 500, 'Chat endpoint failed');
   }
 });
 

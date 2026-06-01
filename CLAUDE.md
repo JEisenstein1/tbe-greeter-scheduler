@@ -14,7 +14,7 @@ Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a servic
 
 ```
 Browser (React SPA)
-  └── /api/chat  →  Vercel Edge Function  →  Anthropic API (claude-sonnet-4-6)
+  └── /api/chat  →  Vercel Edge Function  →  Anthropic API (default: claude-sonnet-4-6; override with ANTHROPIC_MODEL)
 ```
 
 All state is **in-memory** (resets on refresh). There is no database. The Vercel function is a stateless proxy — it receives the full services array on every request and sends it as context to Claude.
@@ -32,7 +32,7 @@ All state is **in-memory** (resets on refresh). There is no database. The Vercel
 | `src/components.tsx` | Shared components: `Topbar`, `BotNav`, `AuthSheet`, `ServiceCard`, modals. |
 | `src/styles.css` | All CSS. Uses CSS custom properties (`--c-navy`, `--c-gold`, etc.) set by the theme system. |
 | `api/chat.js` | Vercel Edge Function. Builds system prompt from request context, calls Anthropic API, returns `{ text, actions }` JSON. |
-| `server/index.ts` | Local Express dev server. Mirrors `api/chat.js` exactly. Used by `npm run dev`. |
+| `server/index.ts` | Local Express dev server. Mirrors `api/chat.js` protocol/schema/model configuration for local `npm run dev`. |
 
 ---
 
@@ -134,6 +134,7 @@ npx tsc --noEmit # Type-check only
 | Variable | Where | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `.env` (local), Vercel settings (prod) | Anthropic API key |
+| `ANTHROPIC_MODEL` | optional `.env` / Vercel setting | Claude model override; defaults to `claude-sonnet-4-6` |
 
 ---
 
