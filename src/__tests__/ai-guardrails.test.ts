@@ -14,7 +14,7 @@ describe('OpenRouter AI guardrails', () => {
   it('routes both Edge and local chat through OpenRouter with configurable model', () => {
     expectBothToContain('https://openrouter.ai/api/v1/chat/completions');
     expectBothToContain('OPENROUTER_API_KEY');
-    expectBothToContain("process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku'");
+    expectBothToContain("process.env.OPENROUTER_MODEL || 'openai/gpt-5.5'");
     expect(api).not.toContain('https://api.anthropic.com/v1/messages');
     expect(server).not.toContain('https://api.anthropic.com/v1/messages');
   });
@@ -42,7 +42,7 @@ describe('OpenRouter AI guardrails', () => {
 
   it('documents OpenRouter env variables without committing secrets', () => {
     expect(envExample).toContain('OPENROUTER_API_KEY=');
-    expect(envExample).toContain('OPENROUTER_MODEL=anthropic/claude-3.5-haiku');
+    expect(envExample).toContain('OPENROUTER_MODEL=openai/gpt-5.5');
     expect(envExample).not.toContain('sk-or-');
   });
 });

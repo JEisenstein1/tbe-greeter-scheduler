@@ -14,7 +14,7 @@ Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a servic
 
 ```
 Browser (React SPA)
-  └── /api/chat  →  Vercel Edge Function  →  OpenRouter API (default: anthropic/claude-3.5-haiku; override with OPENROUTER_MODEL)
+  └── /api/chat  →  Vercel Edge Function  →  OpenRouter API (default: openai/gpt-5.5; override with OPENROUTER_MODEL)
 ```
 
 All state is **in-memory** (resets on refresh). There is no database. The Vercel function is a stateless proxy — it receives the full services array on every request and sends it as context to the configured OpenRouter model.
@@ -134,7 +134,7 @@ npx tsc --noEmit # Type-check only
 | Variable | Where | Description |
 |---|---|---|
 | `OPENROUTER_API_KEY` | `.env` (local), Vercel settings (prod) | OpenRouter API key |
-| `OPENROUTER_MODEL` | optional `.env` / Vercel setting | Model override; defaults to `anthropic/claude-3.5-haiku` |
+| `OPENROUTER_MODEL` | optional `.env` / Vercel setting | Model override; defaults to `openai/gpt-5.5` |
 | `OPENROUTER_SITE_URL` | optional `.env` / Vercel setting | OpenRouter attribution URL |
 | `OPENROUTER_APP_NAME` | optional `.env` / Vercel setting | OpenRouter attribution app name |
 

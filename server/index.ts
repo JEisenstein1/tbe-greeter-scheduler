@@ -172,7 +172,7 @@ app.post('/api/chat', async (req, res) => {
         'X-Title': process.env.OPENROUTER_APP_NAME || 'Temple Beth-El Greeter Scheduler',
       },
       body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku',
+        model: process.env.OPENROUTER_MODEL || 'openai/gpt-5.5',
         max_tokens: 1024,
         temperature: 0.2,
         messages: [

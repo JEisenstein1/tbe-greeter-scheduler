@@ -8,8 +8,8 @@ const claudeMd = readFileSync('CLAUDE.md', 'utf8');
 
 describe('AI routing contract', () => {
   it('uses configurable OPENROUTER_MODEL in both Edge and local server', () => {
-    expect(api).toContain("process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku'");
-    expect(server).toContain("process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku'");
+    expect(api).toContain("process.env.OPENROUTER_MODEL || 'openai/gpt-5.5'");
+    expect(server).toContain("process.env.OPENROUTER_MODEL || 'openai/gpt-5.5'");
   });
 
   it('keeps create_service schema flat in both Edge and local server', () => {

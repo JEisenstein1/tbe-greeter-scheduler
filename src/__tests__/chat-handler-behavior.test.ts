@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import handler, { classifyMessageScope, sanitizeUserMessage } from '../../api/chat.js';
 
 const originalKey = process.env.OPENROUTER_API_KEY;
+const originalModel = process.env.OPENROUTER_MODEL;
 
 function request(message: string, role: 'admin' | 'volunteer' = 'volunteer') {
   return new Request('http://localhost/api/chat', {
@@ -15,6 +16,8 @@ function request(message: string, role: 'admin' | 'volunteer' = 'volunteer') {
 describe('chat handler guard behavior', () => {
   afterEach(() => {
     process.env.OPENROUTER_API_KEY = originalKey;
+    if (originalModel === undefined) delete process.env.OPENROUTER_MODEL;
+    else process.env.OPENROUTER_MODEL = originalModel;
     vi.restoreAllMocks();
   });
 
@@ -45,6 +48,7 @@ describe('chat handler guard behavior', () => {
 
   it('calls OpenRouter for allowed scheduling prompts', async () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
+    delete process.env.OPENROUTER_MODEL;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: 'I can help you find an open greeter slot.', tool_calls: [] } }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -57,7 +61,7 @@ describe('chat handler guard behavior', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String(fetchSpy.mock.calls[0][0])).toContain('openrouter.ai/api/v1/chat/completions');
     const payload = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
-    expect(payload.model).toBe('anthropic/claude-3.5-haiku');
+    expect(payload.model).toBe('openai/gpt-5.5');
     expect(payload.messages[0].content).toContain('Temple Beth-El Greeter Scheduling Assistant');
   });
 

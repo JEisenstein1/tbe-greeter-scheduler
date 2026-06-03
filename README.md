@@ -18,7 +18,7 @@ A mobile-first volunteer scheduling web app for Temple Beth El's greeter and ush
 |---|---|
 | Frontend | Vite 6 + React 19 + TypeScript |
 | API | Vercel Edge Function (`api/chat.js`) |
-| AI | OpenRouter API — default `anthropic/claude-3.5-haiku` |
+| AI | OpenRouter API — default `openai/gpt-5.5` |
 | Deployment | Vercel (auto-deploy from `main`) |
 | Fonts | Google Fonts — Playfair Display, DM Sans, + 3 alternates |
 
