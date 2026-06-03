@@ -67,6 +67,17 @@ const PALETTES: Record<string, { label: string; vars: Record<string, string> }> 
 
 const HEADING_FONTS = ['Playfair Display', 'Cormorant Garamond', 'Fraunces', 'DM Serif Display'];
 
+async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+    credentials: 'include',
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+  return body as T;
+}
+
 export default function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [view, setView] = useState<ViewId>(t.landing || 'ai');
@@ -81,9 +92,20 @@ export default function App() {
     } catch { return null; }
   });
   useEffect(() => {
-    // Do not persist public-kiosk/user identity across reloads until real auth exists.
+    // Do not persist public-kiosk/user identity across reloads; real auth is cookie-backed.
     localStorage.removeItem('tbe.user');
   }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiJson<{ user: User | null }>('/api/auth/me')
+      .then(({ user }) => { if (!cancelled && user) setUser(user); })
+      .catch(() => { /* stay anonymous */ });
+    apiJson<{ services: Service[] }>('/api/services')
+      .then(({ services }) => { if (!cancelled && services?.length) setServices(services); })
+      .catch(() => { /* fixture fallback remains loaded */ });
+    return () => { cancelled = true; };
+  }, []);
   const [authOpen, setAuthOpen] = useState(false);
 
   const [assignTarget, setAssignTarget] = useState<AssignTarget | null>(null);
@@ -117,20 +139,23 @@ export default function App() {
   };
 
   const onAssign = (svc: Service, slot: import('./types').Slot) => setAssignTarget({ svc, slot });
-  const onRemove = (svcId: string | number, slotId: string) => {
+  const onRemove = async (svcId: string | number, slotId: string) => {
+    try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: null, volunteerEmail: null })),
     })));
     pushToast('Volunteer removed');
   };
-  const onConfirmAssign = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+  const onConfirmAssign = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+    let delivery = 'invite prepared';
+    try { const out = await apiJson<{ delivery?: { status?: string } }>('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); delivery = out.delivery?.status === 'sent' ? 'invite sent' : delivery; } catch { /* allow fixture/demo mode */ }
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
     })));
     setAssignTarget(null);
-    pushToast(`${vol.name.split(' ')[0]} assigned · invite sent`);
+    pushToast(`${vol.name.split(' ')[0]} assigned · ${delivery}`);
   };
 
   const onSignUp = (svc: Service, slot: import('./types').Slot, vol: { name: string; email: string }) => {
@@ -138,10 +163,11 @@ export default function App() {
     setSignupForm({ name: vol.name.trim(), email: vol.email.trim() });
     setSignupTarget({ svc, slot });
   };
-  const onConfirmSignUp = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+  const onConfirmSignUp = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
     const svc = services.find(s => s.id === svcId);
     const slot = svc?.slots.find(sl => sl.id === slotId);
     const email = svc && slot ? buildConfirmationEmail(svc, slot, vol) : null;
+    try { await apiJson('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
@@ -159,7 +185,8 @@ export default function App() {
       : `Welcome back, ${u.name.split(' ')[0]}`
     );
   };
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try { await apiJson('/api/auth/logout', { method: 'POST' }); } catch { /* already signed out locally */ }
     setUser(null);
     pushToast('Signed out');
   };
@@ -184,14 +211,16 @@ export default function App() {
     pushToast(`${svc.type} removed`);
   };
 
-  const onRequestCoverage = (svcId: string | number, slotId: string) => {
+  const onRequestCoverage = async (svcId: string | number, slotId: string) => {
+    try { await apiJson('/api/services/request-coverage', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, coverageRequested: true })),
     })));
     pushToast('Coverage requested — we\'ll find a substitute');
   };
-  const onSelfRemove = (svcId: string | number, slotId: string) => {
+  const onSelfRemove = async (svcId: string | number, slotId: string) => {
+    try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({
@@ -208,7 +237,8 @@ export default function App() {
     pushToast('Coverage request marked resolved');
   };
 
-  const onAIVolunteerSignup = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+  const onAIVolunteerSignup = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+    try { await apiJson('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
