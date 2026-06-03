@@ -41,7 +41,10 @@ export function hasDb() { return !!getDatabaseUrl(); }
 export function db() { const url = getDatabaseUrl(); if (!url) throw new Error('Missing DATABASE_URL/POSTGRES_URL'); return neon(url); }
 export const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
-export async function migrate(sql = db()) { await sql.query(SCHEMA_SQL); }
+export async function migrate(sql = db()) {
+  const statements = SCHEMA_SQL.split(';').map(s => s.trim()).filter(Boolean);
+  for (const statement of statements) await sql.query(statement);
+}
 
 export async function seedServices(sql = db()) {
   for (const svc of INITIAL_SERVICES) await upsertService(sql, svc);
