@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { Service, Slot, User, Volunteer, Admin, Toast } from './types';
 import { VOLUNTEERS, ADMINS } from './data';
+import { lookupMockAuthUser, nameFromEmail } from './appLogic';
 import { statusFor, groupSlotsByTime, wdShort, dayNum, moShort } from './helpers';
 
 // ── Icons ────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ export function Topbar({ view, user, onOpenAuth, onSignOut, onNav }: TopbarProps
 
 const NAV_ITEMS = [
   { id: 'ai',       label: 'AI',       icon: 'sparkles' as IconName, role: 'all'   },
-  { id: 'calendar', label: 'Calendar', icon: 'calendar' as IconName, role: 'admin' },
+  { id: 'calendar', label: 'Calendar', icon: 'calendar' as IconName, role: 'all'   },
   { id: 'admin',    label: 'Admin',    icon: 'inbox' as IconName,    role: 'admin' },
   { id: 'signup',   label: 'Sign Up',  icon: 'handshake' as IconName,role: 'all'   },
   { id: 'mydates',  label: 'My Dates', icon: 'user' as IconName,     role: 'all'   },
@@ -451,22 +452,14 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
     setLoading(true);
     await new Promise(r => setTimeout(r, 600));
     setLoading(false);
-    const e = email.toLowerCase().trim();
-    const adminMatch = ADMINS.find(a => a.email.toLowerCase() === e);
-    if (adminMatch) {
-      onSignIn({ name: adminMatch.name, email: adminMatch.email, source: 'password', role: 'admin' });
-      return;
-    }
-    const volMatch = VOLUNTEERS.find(v => v.email.toLowerCase() === e);
-    if (volMatch) {
-      onSignIn({ name: volMatch.name, email: volMatch.email, source: 'password', role: 'volunteer' });
+    const match = lookupMockAuthUser(email, 'password');
+    if (match) {
+      const { verifiedByProvider: _verifiedByProvider, ...user } = match;
+      onSignIn(user);
       return;
     }
     setErr('No account found for that email. Continue as guest to sign up anyway.');
   };
-
-  const nameFromEmail = (e: string) =>
-    e.split('@')[0].split(/[._-]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
   const tryGoogle = async () => {
     setErr('');
@@ -477,18 +470,13 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
     setLoading(true);
     await new Promise(r => setTimeout(r, 800));
     setLoading(false);
-    const e = email.toLowerCase().trim();
-    const adminMatch = ADMINS.find(a => a.email.toLowerCase() === e);
-    if (adminMatch) {
-      onSignIn({ name: adminMatch.name, email: adminMatch.email, source: 'google', role: 'admin' });
+    const match = lookupMockAuthUser(email, 'google');
+    if (match) {
+      const { verifiedByProvider: _verifiedByProvider, ...user } = match;
+      onSignIn(user);
       return;
     }
-    const volMatch = VOLUNTEERS.find(v => v.email.toLowerCase() === e);
-    if (volMatch) {
-      onSignIn({ name: volMatch.name, email: volMatch.email, source: 'google', role: 'volunteer' });
-      return;
-    }
-    // Unknown email — sign in as a new volunteer using their real name derived from email
+    // Demo-only: no Google OAuth token is validated yet.
     onSignIn({ name: nameFromEmail(email.trim()), email: email.trim(), source: 'google', role: 'volunteer' });
   };
 
@@ -522,8 +510,9 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
               </div>
               <button className="auth-google" onClick={tryGoogle} disabled={loading}>
                 <GoogleLogo />
-                {loading ? 'Connecting…' : 'Continue with Google'}
+                {loading ? 'Connecting…' : 'Continue with Google (demo)'}
               </button>
+              <div className="hint">Prototype only: this matches the email against the roster; it does not validate a Google OAuth account yet.</div>
               <div className="auth-divider">or sign in with password</div>
               <div className="auth-field">
                 <label>Password</label>

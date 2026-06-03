@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { Service, Slot, User, ChatMessage, SSEEvent } from './types';
 import { VOLUNTEERS, ADMINS, SYNAGOGUE } from './data';
 import { openCount, groupSlotsByTime, fmtDate, abbrev, statusFor } from './helpers';
+import { findUserAssignments, getCalendarDayPrimaryAction } from './appLogic';
 import { Icon, DateBadge, ServiceCard } from './components';
 
 // ═══════════════════════════════════════════════════════════════
@@ -251,14 +252,19 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
 interface CalendarViewProps {
   services: Service[];
   defaultView?: string;
+  user?: User | null;
+  onOpenAuth?: () => void;
   onAssign: (svc: Service, slot: Slot) => void;
   onRemove: (svcId: string | number, slotId: string) => void;
+  onSignUp?: (svc: Service, slot: Slot, vol: { name: string; email: string }) => void;
+  onRequestCoverage?: (svcId: string | number, slotId: string) => void;
+  onSelfRemove?: (svcId: string | number, slotId: string) => void;
   onCreateEvent: (date: string | null) => void;
   onEditEvent: (svc: Service) => void;
   onDeleteEvent: (svc: Service) => void;
 }
 
-export function CalendarView({ services, defaultView, onAssign, onRemove, onCreateEvent, onEditEvent, onDeleteEvent }: CalendarViewProps) {
+export function CalendarView({ services, defaultView, user, onOpenAuth, onAssign, onRemove, onSignUp, onRequestCoverage, onSelfRemove, onCreateEvent, onEditEvent, onDeleteEvent }: CalendarViewProps) {
   const [mode, setMode] = useState(defaultView || 'list');
   useEffect(() => { setMode(defaultView || 'list'); }, [defaultView]);
 
@@ -298,27 +304,37 @@ export function CalendarView({ services, defaultView, onAssign, onRemove, onCrea
       {mode === 'list' ? (
         <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
           {services.map(svc => (
-            <ServiceCard key={svc.id} svc={svc} mode="admin"
+            <ServiceCard key={svc.id} svc={svc} mode={user?.role === 'admin' ? 'admin' : 'volunteer'}
+                         currentUserName={user?.name}
                          onAssign={onAssign} onRemove={onRemove}
-                         onEdit={onEditEvent} onDelete={onDeleteEvent} />
+                         onSignUp={(svc, slot) => user ? onSignUp?.(svc, slot, { name: user.name, email: user.email }) : onOpenAuth?.()}
+                         onRequestCoverage={onRequestCoverage}
+                         onSelfRemove={onSelfRemove}
+                         onEdit={user?.role === 'admin' ? onEditEvent : undefined}
+                         onDelete={user?.role === 'admin' ? onDeleteEvent : undefined}
+                         name={user?.name || 'Guest'} email={user?.email || 'guest@example.com'} />
           ))}
         </div>
       ) : (
         <GridCalendar services={services}
+                      user={user} onOpenAuth={onOpenAuth}
                       onAssign={onAssign} onRemove={onRemove}
+                      onSignUp={onSignUp} onRequestCoverage={onRequestCoverage} onSelfRemove={onSelfRemove}
                       onCreateEvent={onCreateEvent}
                       onEditEvent={onEditEvent}
                       onDeleteEvent={onDeleteEvent} />
       )}
 
-      <button className="fab" onClick={() => onCreateEvent(null)}>
-        <span className="plus">+</span> New event
-      </button>
+      {user?.role === 'admin' && (
+        <button className="fab" onClick={() => onCreateEvent(null)}>
+          <span className="plus">+</span> New event
+        </button>
+      )}
     </div>
   );
 }
 
-function GridCalendar({ services, onAssign, onRemove, onCreateEvent, onEditEvent, onDeleteEvent }: CalendarViewProps) {
+function GridCalendar({ services, user, onOpenAuth, onAssign, onRemove, onSignUp, onRequestCoverage, onSelfRemove, onCreateEvent, onEditEvent, onDeleteEvent }: CalendarViewProps) {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(4); // May
   const [selected, setSelected] = useState<string | null>(null);
@@ -397,7 +413,7 @@ function GridCalendar({ services, onAssign, onRemove, onCreateEvent, onEditEvent
             return (
               <div key={i}
                    className={`cal-cell${has ? ' has' : ''}${isToday ? ' today' : ''}${isSel ? ' selected' : ''}`}
-                   onClick={() => has && setSelected(isSel ? null : cell.iso)}>
+                   onClick={() => setSelected(isSel ? null : cell.iso)}>
                 <div className="num">{cell.d}</div>
                 {has && (
                   <div className="pills">
@@ -435,27 +451,41 @@ function GridCalendar({ services, onAssign, onRemove, onCreateEvent, onEditEvent
           {selectedSvcs.length === 0 ? (
             <div className="day-create">
               <div className="glyph">✦</div>
-              <div className="msg">No events scheduled for this day yet.</div>
-              <button className="btn primary" onClick={() => onCreateEvent(selected)}>
-                <Icon name="pen" size={14} /> Create event on this day
-              </button>
+              <div className="msg">No services scheduled for this day yet.</div>
+              {user?.role === 'admin' ? (
+                <button className="btn primary" onClick={() => onCreateEvent(selected)}>
+                  <Icon name="pen" size={14} /> Create event on this day
+                </button>
+              ) : (
+                <button className="btn primary" onClick={() => onOpenAuth?.()}>
+                  Sign in to volunteer
+                </button>
+              )}
             </div>
           ) : (
             <>
               {selectedSvcs.map(svc => (
-                <ServiceCard key={svc.id} svc={svc} mode="admin"
+                <ServiceCard key={svc.id} svc={svc} mode={user?.role === 'admin' ? 'admin' : 'volunteer'}
+                             currentUserName={user?.name}
                              onAssign={onAssign} onRemove={onRemove}
-                             onEdit={onEditEvent} onDelete={onDeleteEvent} />
+                             onSignUp={(svc, slot) => user ? onSignUp?.(svc, slot, { name: user.name, email: user.email }) : onOpenAuth?.()}
+                             onRequestCoverage={onRequestCoverage}
+                             onSelfRemove={onSelfRemove}
+                             onEdit={user?.role === 'admin' ? onEditEvent : undefined}
+                             onDelete={user?.role === 'admin' ? onDeleteEvent : undefined}
+                             name={user?.name || 'Guest'} email={user?.email || 'guest@example.com'} />
               ))}
-              <button className="btn ghost" onClick={() => onCreateEvent(selected)} style={{ alignSelf: 'flex-start' }}>
-                <span style={{
-                  width: 18, height: 18, borderRadius: '50%',
-                  background: 'var(--c-gold)', color: 'var(--c-navy)',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, fontWeight: 700,
-                }}>+</span>
-                Add another event on this day
-              </button>
+              {user?.role === 'admin' && (
+                <button className="btn ghost" onClick={() => onCreateEvent(selected)} style={{ alignSelf: 'flex-start' }}>
+                  <span style={{
+                    width: 18, height: 18, borderRadius: '50%',
+                    background: 'var(--c-gold)', color: 'var(--c-navy)',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 13, fontWeight: 700,
+                  }}>+</span>
+                  Add another event on this day
+                </button>
+              )}
             </>
           )}
         </div>
@@ -585,20 +615,10 @@ export function MyDatesView({ services, user, onOpenAuth, onRequestCoverage, onS
   const lookup = () => setSubmitted(query.trim());
 
   const matches = useMemo(() => {
-    if (!submitted) return null;
-    const q = submitted.toLowerCase();
-    const out: { svc: Service; slot: Slot }[] = [];
     const todayISO = new Date().toISOString().slice(0, 10);
-    services.forEach(svc => {
-      if (svc.dateISO < todayISO) return;
-      svc.slots.forEach(sl => {
-        if (sl.volunteer && sl.volunteer.toLowerCase().includes(q)) {
-          out.push({ svc, slot: sl });
-        }
-      });
-    });
-    return out;
-  }, [submitted, services]);
+    if (!user && !submitted) return null;
+    return findUserAssignments(services, user, todayISO, submitted);
+  }, [submitted, services, user]);
 
   return (
     <div>

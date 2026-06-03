@@ -13,8 +13,9 @@ const REFUSAL_TEXT = 'I can only help with Temple Beth-El greeter scheduling, av
 
 const ALLOWED_PATTERNS = [
   /\b(temple beth[- ]?el|temple|synagogue|shul)\b/i,
-  /\b(greeter|usher|parking attendant|volunteer|service|shabbat|havdalah|rosh hashanah|yom kippur|high holiday)\b/i,
-  /\b(sign\s?up|schedule|scheduling|availability|available|slot|coverage|substitute|reminder|calendar|admin|shift)\b/i,
+  /\b(greeters?|ushers?|parking attendants?|volunteers?|services?|shabbat|havdalah|rosh hashanah|yom kippur|high holidays?)\b/i,
+  /\b(sign\s?up|signed\s+up|signup|schedule|scheduled|scheduling|availability|available|slot|coverage|substitute|reminder|calendar|admin|shift|dates?|assignments?|commitments?)\b/i,
+  /\b(what|show|list|when|am)\b.*\b(my|i)\b.*\b(dates?|services?|schedule|assignments?|signed\s+up)\b/i,
 ];
 
 const DISALLOWED_PATTERNS = [

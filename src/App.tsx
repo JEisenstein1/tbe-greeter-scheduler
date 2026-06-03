@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Service, User, ViewId, AdminSubId, AssignTarget, SignupTarget, EventEditState, TweakValues } from './types';
 import { INITIAL_SERVICES } from './data';
+import { buildConfirmationEmail, shouldRestorePersistedUser } from './appLogic';
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakToggle } from './TweaksPanel';
 import { Topbar, BotNav, AssignModal, SignUpModal, ToastRail, AuthSheet, EventEditModal, ConfirmDialog } from './components';
 import {
@@ -75,12 +76,13 @@ export default function App() {
   const [user, setUser] = useState<User | null>(() => {
     try {
       const raw = localStorage.getItem('tbe.user');
+      if (!shouldRestorePersistedUser(raw)) return null;
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   });
   useEffect(() => {
-    if (user) localStorage.setItem('tbe.user', JSON.stringify(user));
-    else localStorage.removeItem('tbe.user');
+    // Do not persist public-kiosk/user identity across reloads until real auth exists.
+    localStorage.removeItem('tbe.user');
   }, [user]);
   const [authOpen, setAuthOpen] = useState(false);
 
@@ -92,7 +94,7 @@ export default function App() {
   const [toasts, setToasts] = useState<{ id: string; msg: string }[]>([]);
 
   useEffect(() => {
-    const adminOnly: ViewId[] = ['calendar', 'admin'];
+    const adminOnly: ViewId[] = ['admin'];
     if (adminOnly.includes(view) && user?.role !== 'admin') {
       setView('ai');
       setAdminSub(null);
@@ -137,12 +139,15 @@ export default function App() {
     setSignupTarget({ svc, slot });
   };
   const onConfirmSignUp = (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
+    const svc = services.find(s => s.id === svcId);
+    const slot = svc?.slots.find(sl => sl.id === slotId);
+    const email = svc && slot ? buildConfirmationEmail(svc, slot, vol) : null;
     setServices(prev => prev.map(s => s.id !== svcId ? s : ({
       ...s,
       slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
     })));
     setSignupTarget(null);
-    pushToast('Confirmation sent — see you there!');
+    pushToast(email ? `Confirmation prepared for ${email.to}` : 'Confirmation prepared');
   };
 
   const handleSignIn = (u: User) => {
@@ -232,7 +237,9 @@ export default function App() {
         )}
         {view === 'calendar' && (
           <CalendarView services={services} defaultView={t.defaultCalendarView}
+                        user={user} onOpenAuth={() => setAuthOpen(true)}
                         onAssign={onAssign} onRemove={onRemove}
+                        onSignUp={onSignUp} onRequestCoverage={onRequestCoverage} onSelfRemove={onSelfRemove}
                         onCreateEvent={onCreateEvent}
                         onEditEvent={onEditEvent}
                         onDeleteEvent={onDeleteEvent} />
