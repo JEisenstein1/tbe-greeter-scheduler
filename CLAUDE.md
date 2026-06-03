@@ -6,7 +6,7 @@ Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a servic
 
 **Live:** https://tbe-greeter-scheduler.vercel.app  
 **Repo:** https://github.com/JEisenstein1/tbe-greeter-scheduler  
-**Stack:** Vite + React 19 + TypeScript + Vercel Edge Functions + Anthropic API
+**Stack:** Vite + React 19 + TypeScript + Vercel Edge Functions + OpenRouter API
 
 ---
 
@@ -14,10 +14,10 @@ Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a servic
 
 ```
 Browser (React SPA)
-  └── /api/chat  →  Vercel Edge Function  →  Anthropic API (default: claude-sonnet-4-6; override with ANTHROPIC_MODEL)
+  └── /api/chat  →  Vercel Edge Function  →  OpenRouter API (default: anthropic/claude-3.5-haiku; override with OPENROUTER_MODEL)
 ```
 
-All state is **in-memory** (resets on refresh). There is no database. The Vercel function is a stateless proxy — it receives the full services array on every request and sends it as context to Claude.
+All state is **in-memory** (resets on refresh). There is no database. The Vercel function is a stateless proxy — it receives the full services array on every request and sends it as context to the configured OpenRouter model.
 
 ---
 
@@ -31,7 +31,7 @@ All state is **in-memory** (resets on refresh). There is no database. The Vercel
 | `src/views.tsx` | All page views. `AIView` owns the chat UI and API fetch logic. |
 | `src/components.tsx` | Shared components: `Topbar`, `BotNav`, `AuthSheet`, `ServiceCard`, modals. |
 | `src/styles.css` | All CSS. Uses CSS custom properties (`--c-navy`, `--c-gold`, etc.) set by the theme system. |
-| `api/chat.js` | Vercel Edge Function. Builds system prompt from request context, calls Anthropic API, returns `{ text, actions }` JSON. |
+| `api/chat.js` | Vercel Edge Function. Sanitizes and domain-gates input, builds system prompt from request context, calls OpenRouter, returns `{ text, actions }` JSON. |
 | `server/index.ts` | Local Express dev server. Mirrors `api/chat.js` protocol/schema/model configuration for local `npm run dev`. |
 
 ---
@@ -94,10 +94,10 @@ To add an admin, add them to `ADMINS` in `src/data.ts`.
 }
 ```
 
-The Edge Function builds a system prompt that includes the full calendar, the user's current slots, and available open slots. It calls Anthropic non-streaming and returns:
+The Edge Function rejects off-topic/unsafe input before the model, then builds a strict Temple Beth-El greeter/scheduling system prompt that includes the full calendar, the user's current slots, and available open slots. It calls OpenRouter non-streaming and returns:
 ```json
 {
-  "text": "Claude's response text",
+  "text": "model response text",
   "actions": [
     { "action": "sign_me_up", "svcId": "1", "slotId": "s3" },
     { "action": "create_service", ...serviceObject },
@@ -133,8 +133,10 @@ npx tsc --noEmit # Type-check only
 
 | Variable | Where | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | `.env` (local), Vercel settings (prod) | Anthropic API key |
-| `ANTHROPIC_MODEL` | optional `.env` / Vercel setting | Claude model override; defaults to `claude-sonnet-4-6` |
+| `OPENROUTER_API_KEY` | `.env` (local), Vercel settings (prod) | OpenRouter API key |
+| `OPENROUTER_MODEL` | optional `.env` / Vercel setting | Model override; defaults to `anthropic/claude-3.5-haiku` |
+| `OPENROUTER_SITE_URL` | optional `.env` / Vercel setting | OpenRouter attribution URL |
+| `OPENROUTER_APP_NAME` | optional `.env` / Vercel setting | OpenRouter attribution app name |
 
 ---
 

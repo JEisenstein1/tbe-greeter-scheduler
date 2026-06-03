@@ -1,12 +1,12 @@
 # Temple Beth El — Greeter Scheduler
 
-A mobile-first volunteer scheduling web app for Temple Beth El's greeter and usher program. Built with Vite + React + TypeScript, deployed on Vercel, with an AI scheduling assistant powered by the Anthropic API.
+A mobile-first volunteer scheduling web app for Temple Beth El's greeter and usher program. Built with Vite + React + TypeScript, deployed on Vercel, with an AI scheduling assistant powered by OpenRouter.
 
 **Live app:** https://tbe-greeter-scheduler.vercel.app
 
 ## Features
 
-- **AI Scheduling Assistant** — chat with Claude to add services, sign up for slots, or request coverage
+- **AI Scheduling Assistant** — chat with a guarded scheduling assistant to add services, sign up for slots, or request coverage
 - **Admin view** — calendar management, slot assignment, volunteer/admin roster, coverage requests
 - **Volunteer view** — sign up for services, view your upcoming dates, request substitutes
 - **Role-based auth** — mock Google sign-in; email matched against seeded admin/volunteer lists
@@ -18,7 +18,7 @@ A mobile-first volunteer scheduling web app for Temple Beth El's greeter and ush
 |---|---|
 | Frontend | Vite 6 + React 19 + TypeScript |
 | API | Vercel Edge Function (`api/chat.js`) |
-| AI | Anthropic API — `claude-sonnet-4-6` |
+| AI | OpenRouter API — default `anthropic/claude-3.5-haiku` |
 | Deployment | Vercel (auto-deploy from `main`) |
 | Fonts | Google Fonts — Playfair Display, DM Sans, + 3 alternates |
 
@@ -53,7 +53,7 @@ src/
   main.tsx         # React entry point
 
 api/
-  chat.js          # Vercel Edge Function — Anthropic API proxy
+  chat.js          # Vercel Edge Function — guarded OpenRouter API proxy
 
 server/
   index.ts         # Local Express dev server (mirrors api/chat.js)

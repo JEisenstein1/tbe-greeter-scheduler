@@ -7,9 +7,9 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const claudeMd = readFileSync('CLAUDE.md', 'utf8');
 
 describe('AI routing contract', () => {
-  it('uses configurable ANTHROPIC_MODEL in both Edge and local server', () => {
-    expect(api).toContain("process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6'");
-    expect(server).toContain("process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6'");
+  it('uses configurable OPENROUTER_MODEL in both Edge and local server', () => {
+    expect(api).toContain("process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku'");
+    expect(server).toContain("process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku'");
   });
 
   it('keeps create_service schema flat in both Edge and local server', () => {
@@ -20,19 +20,21 @@ describe('AI routing contract', () => {
   });
 
   it('returns JSON from local server instead of SSE', () => {
-    expect(server).toContain('res.json({ text, actions });');
+    expect(server).toContain('res.json(result);');
     expect(server).not.toContain('text/event-stream');
     expect(server).not.toContain('res.write(`data:');
   });
 
-  it('does not depend on the Anthropic SDK after local server alignment', () => {
+  it('does not depend on the Anthropic SDK after OpenRouter migration', () => {
+    expect(api).not.toContain('api.anthropic.com');
+    expect(server).not.toContain('api.anthropic.com');
     expect(server).not.toContain('@anthropic-ai/sdk');
     expect(server).not.toContain('new Anthropic');
     expect(pkg.dependencies['@anthropic-ai/sdk']).toBeUndefined();
   });
 
-  it('documents local/Edge parity and model override', () => {
+  it('documents local/Edge parity and OpenRouter model override', () => {
     expect(claudeMd).toContain('Mirrors `api/chat.js` protocol/schema/model configuration');
-    expect(claudeMd).toContain('ANTHROPIC_MODEL');
+    expect(claudeMd).toContain('OPENROUTER_MODEL');
   });
 });
