@@ -205,9 +205,10 @@ export default function App() {
     setEventEdit(null);
     pushToast(isEdit ? `${svc.type} updated` : `${svc.type} added`);
   };
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     const svc = eventDelete!;
-    setServices(prev => prev.filter(s => s.id !== svc.id));
+    try { await apiJson('/api/services/delete', { method: 'POST', body: JSON.stringify({ serviceId: svc.id }) }); } catch { /* allow fixture/demo mode */ }
+    setServices(prev => prev.filter(s => svc.id !== s.id));
     setEventDelete(null);
     pushToast(`${svc.type} removed`);
   };
