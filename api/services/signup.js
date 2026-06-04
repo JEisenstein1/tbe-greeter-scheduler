@@ -1,5 +1,6 @@
 import { db, getSlot, logAudit, logEmail, normalizeEmail } from '../_db.js';
-import { requireUser, handleError } from '../_http.js';
+import { COOKIE_NAME, parseCookies, verifySessionCookie } from '../_auth.js';
+import { handleError } from '../_http.js';
 
 async function sendConfirmation(to, subject, text) {
   if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) return { provider: 'disabled', status: 'disabled', error: 'RESEND_API_KEY/EMAIL_FROM not configured' };
@@ -9,24 +10,35 @@ async function sendConfirmation(to, subject, text) {
   return { provider: 'resend', status: 'sent', providerMessageId: body?.id };
 }
 
+export function getSignupActor(req) {
+  const sessionUser = verifySessionCookie(parseCookies(req)[COOKIE_NAME]);
+  const { name, email } = req.body || {};
+  if (sessionUser?.role === 'admin' && name && email) {
+    return { actorEmail: sessionUser.email, action: 'admin_assign', volName: String(name).trim(), volEmail: normalizeEmail(email), role: 'admin' };
+  }
+  if (sessionUser) {
+    return { actorEmail: sessionUser.email, action: 'signup', volName: sessionUser.name, volEmail: normalizeEmail(sessionUser.email), role: sessionUser.role };
+  }
+  if (!name?.trim() || !email?.trim()) throw Object.assign(new Error('name and email required'), { status: 400 });
+  return { actorEmail: normalizeEmail(email), action: 'public_signup', volName: String(name).trim(), volEmail: normalizeEmail(email), role: 'volunteer' };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
-    const user = requireUser(req);
-    const { slotId, serviceId, name, email } = req.body || {};
+    const { slotId, serviceId } = req.body || {};
     if (!slotId || !serviceId) return res.status(400).json({ error: 'slotId and serviceId required' });
+    const user = getSignupActor(req);
     const sql = db();
     const slot = await getSlot(sql, slotId);
     if (!slot) return res.status(404).json({ error: 'Slot not found' });
     if (slot.volunteer_email && user.role !== 'admin') return res.status(409).json({ error: 'Slot already filled' });
-    const volName = user.role === 'admin' && name ? name : user.name;
-    const volEmail = normalizeEmail(user.role === 'admin' && email ? email : user.email);
-    await sql`UPDATE slots SET volunteer_name=${volName}, volunteer_email=${volEmail}, coverage_requested=FALSE, updated_at=NOW() WHERE id=${slotId}`;
-    await logAudit(sql, user.email, user.role === 'admin' ? 'admin_assign' : 'signup', 'slot', slotId, { serviceId, volunteerEmail: volEmail });
+    await sql`UPDATE slots SET volunteer_name=${user.volName}, volunteer_email=${user.volEmail}, coverage_requested=FALSE, updated_at=NOW() WHERE id=${slotId}`;
+    await logAudit(sql, user.actorEmail, user.action, 'slot', slotId, { serviceId, volunteerEmail: user.volEmail });
     const subject = 'Temple Beth El greeter confirmation';
-    const text = `Hi ${volName},\n\nYou are confirmed for ${slot.role}${slot.time_slot ? ` (${slot.time_slot})` : ''}.\n\nThank you for volunteering.`;
-    const delivery = await sendConfirmation(volEmail, subject, text);
-    await logEmail(sql, { to: volEmail, subject, provider: delivery.provider, status: delivery.status, providerMessageId: delivery.providerMessageId, error: delivery.error });
+    const text = `Hi ${user.volName},\n\nYou are confirmed for ${slot.role}${slot.time_slot ? ` (${slot.time_slot})` : ''}.\n\nThank you for volunteering.`;
+    const delivery = await sendConfirmation(user.volEmail, subject, text);
+    await logEmail(sql, { to: user.volEmail, subject, provider: delivery.provider, status: delivery.status, providerMessageId: delivery.providerMessageId, error: delivery.error });
     return res.status(200).json({ ok: true, delivery });
   } catch (error) { return handleError(res, error); }
 }
