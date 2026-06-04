@@ -195,8 +195,9 @@ export default function App() {
   const onEditEvent = (svc: Service) => setEventEdit({ initial: svc, prefilledDate: null });
   const onDeleteEvent = (svc: Service) => setEventDelete(svc);
 
-  const handleSaveEvent = (svc: Service) => {
+  const handleSaveEvent = async (svc: Service) => {
     const isEdit = services.some(s => s.id === svc.id);
+    try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => {
       if (isEdit) return prev.map(s => s.id === svc.id ? svc : s);
       return [...prev, svc].sort((a, b) => a.dateISO.localeCompare(b.dateISO));
@@ -245,7 +246,8 @@ export default function App() {
     })));
     pushToast(`Signed up — confirmation sent to ${vol.email}`);
   };
-  const onAICreateService = (svc: Service) => {
+  const onAICreateService = async (svc: Service) => {
+    try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); } catch { /* allow fixture/demo mode */ }
     setServices(prev => [...prev, svc].sort((a, b) => a.dateISO.localeCompare(b.dateISO)));
     pushToast(`${svc.type} added to calendar`);
   };

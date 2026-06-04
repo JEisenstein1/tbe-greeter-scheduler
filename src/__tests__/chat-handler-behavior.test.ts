@@ -5,11 +5,11 @@ import handler, { classifyMessageScope, sanitizeUserMessage } from '../../api/ch
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalModel = process.env.OPENROUTER_MODEL;
 
-function request(message: string, role: 'admin' | 'volunteer' = 'volunteer') {
+function request(message: string, role: 'admin' | 'volunteer' = 'volunteer', extra: Record<string, unknown> = {}) {
   return new Request('http://localhost/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, role, user: { name: 'Test Volunteer', email: 'test@example.com' }, services: [] }),
+    body: JSON.stringify({ message, role, user: { name: 'Test Volunteer', email: 'test@example.com' }, services: [], ...extra }),
   });
 }
 
@@ -80,6 +80,28 @@ describe('chat handler guard behavior', () => {
     expect(res.status).toBe(200);
     expect(body.text).toContain('open greeter slot');
     expect(body.actions).toEqual([]);
+  });
+  it('allows confirmation follow-ups when recent chat history is scheduling-related', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: {
+        content: 'Confirmed — I created the service.',
+        tool_calls: [{ function: { name: 'create_service', arguments: JSON.stringify({ id: 'svc-20260703', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Friday Evening', isHH: false, slots: [] }) } }],
+      } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const history = [
+      { role: 'user', content: 'Create Friday evening services for the rest of the year?' },
+      { role: 'assistant', content: 'Please confirm: should I create the missing Friday evening services?' },
+    ];
+    const res = await handler(request('Yes, confirmed', 'admin', { history }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actions).toHaveLength(1);
+    expect(body.actions[0]).toMatchObject({ action: 'create_service' });
+    const payload = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(payload.messages.map((m: { role: string }) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
   });
 });
 

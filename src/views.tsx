@@ -77,6 +77,10 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
   }, [messages, typing, streamText]);
 
   const sendToAPI = async (userText: string) => {
+    const history = messages
+      .slice(-8)
+      .filter(m => m.text?.trim())
+      .map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text.slice(0, 1200) }));
     setMessages(m => [...m, { role: 'user', text: userText, card: null }]);
     setTyping(true);
     setIsStreaming(true);
@@ -89,6 +93,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userText,
+          history,
           role: effectiveRole,
           user: user ? { name: user.name, email: user.email } : null,
           services: services.map(s => ({

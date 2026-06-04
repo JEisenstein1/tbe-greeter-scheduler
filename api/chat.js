@@ -24,6 +24,26 @@ const DISALLOWED_PATTERNS = [
   /javascript:/i,
 ];
 
+const CONFIRMATION_RE = /^(yes|yep|yeah|confirmed?|confirm|go ahead|please do|do it|sounds good|ok|okay|approved|proceed)([,.!\s]*(confirmed?|please|thanks?)?)*$/i;
+
+function normalizeHistory(rawHistory) {
+  if (!Array.isArray(rawHistory)) return [];
+  return rawHistory.slice(-8).map(item => {
+    const role = item?.role === 'assistant' ? 'assistant' : 'user';
+    const content = typeof item?.content === 'string' ? item.content.normalize('NFKC').trim().slice(0, 1200) : '';
+    return content ? { role, content } : null;
+  }).filter(Boolean);
+}
+
+function isConfirmationFollowUp(message, history = []) {
+  if (!CONFIRMATION_RE.test(message.trim())) return false;
+  const priorText = history.slice(-4).map(h => h.content).join('\n').toLowerCase();
+  if (!priorText) return false;
+  const schedulingContext = ALLOWED_PATTERNS.some(pattern => pattern.test(priorText));
+  const askedForConfirmation = /\b(confirm|go ahead|create|add|schedule|sign you up|request coverage|should i|would you like|please confirm)\b/i.test(priorText);
+  return schedulingContext && askedForConfirmation;
+}
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -48,7 +68,7 @@ export function sanitizeUserMessage(rawMessage) {
   return { ok: true, message: normalized };
 }
 
-export function classifyMessageScope(message) {
+function classifyMessageScope(message, history = []) {
   const lower = message.toLowerCase();
   if (DISALLOWED_PATTERNS.some(pattern => pattern.test(lower))) {
     return { allowed: false, reason: 'blocked_pattern' };
@@ -56,8 +76,13 @@ export function classifyMessageScope(message) {
   if (ALLOWED_PATTERNS.some(pattern => pattern.test(lower))) {
     return { allowed: true, reason: 'allowed_pattern' };
   }
+  if (isConfirmationFollowUp(message, history)) {
+    return { allowed: true, reason: 'confirmation_followup' };
+  }
   return { allowed: false, reason: 'off_topic' };
 }
+
+export { classifyMessageScope };
 
 function buildSystemPrompt(role, user, services = []) {
   const today = new Date().toISOString().slice(0, 10);
@@ -156,8 +181,9 @@ function extractOpenRouterResponse(data) {
   return { text, actions };
 }
 
-function actionIntentPermitsTools(message, actionName) {
+function actionIntentPermitsTools(message, actionName, history = []) {
   const lower = message.toLowerCase();
+  if (isConfirmationFollowUp(message, history)) return true;
   if (actionName === 'sign_me_up') {
     return /\b(sign me up|i want to sign up|please sign me up|put me down|i'?ll take|i can cover|add me)\b/i.test(lower);
   }
@@ -182,7 +208,8 @@ export default async function handler(req) {
   const sanitized = sanitizeUserMessage(body?.message);
   if (!sanitized.ok) return jsonResponse({ error: sanitized.error }, 400);
 
-  const scope = classifyMessageScope(sanitized.message);
+  const history = normalizeHistory(body?.history);
+  const scope = classifyMessageScope(sanitized.message, history);
   if (!scope.allowed) return jsonResponse({ text: REFUSAL_TEXT, actions: [] });
 
   const role = body.role === 'admin' ? 'admin' : 'volunteer';
@@ -204,6 +231,7 @@ export default async function handler(req) {
         temperature: 0.2,
         messages: [
           { role: 'system', content: buildSystemPrompt(role, body.user, services) },
+          ...history,
           { role: 'user', content: sanitized.message },
         ],
         tools,
@@ -217,7 +245,7 @@ export default async function handler(req) {
     }
 
     const result = extractOpenRouterResponse(await openRouterRes.json());
-    result.actions = result.actions.filter(action => actionIntentPermitsTools(sanitized.message, action.action));
+    result.actions = result.actions.filter(action => actionIntentPermitsTools(sanitized.message, action.action, history));
     return jsonResponse(result);
   } catch (err) {
     console.error('Chat endpoint error', err);
