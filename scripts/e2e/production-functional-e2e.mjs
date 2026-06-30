@@ -153,12 +153,15 @@ async function main() {
 
   const bulkPrompt = 'Can you continue the pattern of friday night and saturday morning services through the end of the year? Create them like the rest but extend the pattern.';
   const bulkPreview = await request('POST', '/api/chat', { message: bulkPrompt, services: afterCoverage.body.services }, { Cookie: adminCookie() });
-  assert(bulkPreview.body?.text?.includes('Reply') && bulkPreview.body.actions?.length === 0, 'bulk pattern initial prompt should preview only', bulkPreview.body);
-  log('AI bulk pattern preview requires confirmation');
+  const bulkAlreadyDone = String(bulkPreview.body?.text || '').includes('already appears to extend through year-end');
+  assert((bulkPreview.body?.text?.includes('Reply') || bulkAlreadyDone) && bulkPreview.body.actions?.length === 0, 'bulk pattern initial prompt should preview only or report already complete', bulkPreview.body);
+  log('AI bulk pattern initial response is safe', bulkAlreadyDone ? 'already complete' : 'confirmation required');
 
-  const bulkConfirm = await request('POST', '/api/chat', { message: 'confirm', history: [{ role: 'user', content: bulkPrompt }, { role: 'assistant', content: bulkPreview.body.text }], services: afterCoverage.body.services }, { Cookie: adminCookie() });
-  assert(bulkConfirm.body?.text?.includes('Confirmed') && bulkConfirm.body.actions?.length > 0, 'bulk confirmation should return create actions', bulkConfirm.body);
-  log('AI bulk pattern confirmation returns actions', `${bulkConfirm.body.actions.length} actions`);
+  if (!bulkAlreadyDone) {
+    const bulkConfirm = await request('POST', '/api/chat', { message: 'confirm', history: [{ role: 'user', content: bulkPrompt }, { role: 'assistant', content: bulkPreview.body.text }], services: afterCoverage.body.services }, { Cookie: adminCookie() });
+    assert(bulkConfirm.body?.text?.includes('Confirmed') && bulkConfirm.body.actions?.length > 0, 'bulk confirmation should return create actions', bulkConfirm.body);
+    log('AI bulk pattern confirmation returns actions', `${bulkConfirm.body.actions.length} actions`);
+  }
   if (executeMassCreate) fail('--execute-mass-create intentionally not implemented until bulk-create endpoint exists');
 
   const logsUnauthorized = await request('GET', '/api/admin/ai-logs?limit=1');

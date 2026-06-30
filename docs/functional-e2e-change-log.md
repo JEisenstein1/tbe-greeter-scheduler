@@ -28,6 +28,14 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Tests: added `src/__tests__/calendar-invite-email.test.ts`; updated preview copy expectation.
 - Rollback: reset to `pre-fix-calendar-invite-20260630T102205Z` or revert the calendar-invite commit.
 
+## 2026-06-30 — Production E2E existing bulk-pattern state
+
+- Pre-fix snapshot: `pre-fix-e2e-bulk-existing-pattern-20260630T102840Z`
+- Finding: production now already has Friday/Saturday services extended through year-end, so the bulk pattern AI endpoint correctly returns "already appears to extend" instead of a preview.
+- Change: updated `scripts/e2e/production-functional-e2e.mjs` to accept both safe outcomes: preview-with-zero-actions, or already-complete-with-zero-actions.
+- App code changed: none.
+- Rollback: revert the script change only.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.
