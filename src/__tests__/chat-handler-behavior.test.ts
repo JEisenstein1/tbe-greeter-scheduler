@@ -200,6 +200,32 @@ describe('chat handler guard behavior', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('carries admin volunteer assignment intent across date-only follow-ups', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const services = [
+      {
+        id: 'svc-this-fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+        slots: [{ id: 'slot-full', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon.eisenstein@gmail.com' }],
+      },
+      {
+        id: 'svc-next-fri', dateISO: '2026-07-10', date: 'Friday, July 10', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+        slots: [{ id: 'slot-open', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }],
+      },
+    ];
+    const volunteers = [{ name: 'Debbie Adler-Klein', email: 'dakmd75@gmail.com', active: true }];
+    const history = [
+      { role: 'user', content: 'Schedule Debbie for this Friday' },
+      { role: 'assistant', content: 'This Friday is full. Which service should I use?' },
+    ];
+
+    const res = await handler(request('How about next friday', 'admin', { services, volunteers, history, headers: adminHeaders() }));
+    const body = await res.json();
+
+    expect(body.actions).toEqual([{ action: 'assign_volunteer', svcId: 'svc-next-fri', slotId: 'slot-open', volunteerName: 'Debbie Adler-Klein', volunteerEmail: 'dakmd75@gmail.com' }]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('lets admins assign a uniquely matched volunteer by first name to a Friday slot', async () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch');

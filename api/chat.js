@@ -439,10 +439,12 @@ function extractRequestedVolunteerName(message) {
   if (!name || /^(me|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(name)) return '';
   return name;
 }
-function maybeBuildAdminAssignmentAction(message, role, services, volunteers = []) {
+function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [], history = []) {
   if (role !== 'admin') return null;
-  if (!/\b(add|assign|schedule|put|sign up)\b/i.test(message) || !/\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(message)) return null;
-  const requestedName = extractRequestedVolunteerName(message);
+  const priorText = history.slice(-4).map(h => h.content).join('\n');
+  const assignmentLike = /\b(add|assign|schedule|put|sign up)\b/i.test(message) || (/\b(next|this|following|how about|what about|friday|saturday|shabbat)\b/i.test(message) && /\b(add|assign|schedule|put|sign up|look up)\b/i.test(priorText));
+  if (!assignmentLike || !/\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(`${message}\n${priorText}`)) return null;
+  const requestedName = extractRequestedVolunteerName(message) || extractRequestedVolunteerName(priorText);
   if (!requestedName) return null;
   const matches = volunteerMatches(volunteers, requestedName).filter(v => v?.active !== false);
   if (matches.length > 1) {
@@ -578,7 +580,7 @@ export default async function handler(req) {
   const role = userRole;
   const rawServices = Array.isArray(body.services) ? body.services : [];
   const services = redactServicesForRole(rawServices, sessionUser, role);
-  const deterministicAssignment = maybeBuildAdminAssignmentAction(sanitized.message, role, services, body?.volunteers || []);
+  const deterministicAssignment = maybeBuildAdminAssignmentAction(sanitized.message, role, services, body?.volunteers || [], history);
   const deterministicRemoval = maybeBuildRemoveSignupAction(sanitized.message, role, services, sessionUser);
   const simpleDeterministic = deterministicAssignment || deterministicRemoval;
   if (simpleDeterministic) {
