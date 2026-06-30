@@ -103,6 +103,38 @@ describe('chat handler guard behavior', () => {
     const payload = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
     expect(payload.messages.map((m: { role: string }) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
   });
+
+  it('previews recurring Friday/Saturday bulk creation before returning create actions', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const services = [
+      { id: 'fri-template', dateISO: '2026-06-26', date: 'Friday, June 26', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: null }] },
+      { id: 'sat-template', dateISO: '2026-06-27', date: 'Saturday, June 27', time: '10:00 AM', type: 'Shabbat Morning', isHH: false, slots: [{ id: 's1', role: 'Greeter', timeSlot: null, volunteer: null }] },
+    ];
+
+    const preview = await handler(request('Continue the Friday night and Saturday morning service pattern through the end of the year', 'admin', { services }));
+    const previewBody = await preview.json();
+
+    expect(preview.status).toBe(200);
+    expect(previewBody.text).toContain('Reply “confirm”');
+    expect(previewBody.actions).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const confirmed = await handler(request('confirm', 'admin', {
+      services,
+      history: [
+        { role: 'user', content: 'Continue the Friday night and Saturday morning service pattern through the end of the year' },
+        { role: 'assistant', content: previewBody.text },
+      ],
+    }));
+    const confirmedBody = await confirmed.json();
+
+    expect(confirmed.status).toBe(200);
+    expect(confirmedBody.text).toContain('Confirmed');
+    expect(confirmedBody.actions.length).toBeGreaterThan(10);
+    expect(confirmedBody.actions[0]).toMatchObject({ action: 'create_service' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('chat guard helper functions', () => {

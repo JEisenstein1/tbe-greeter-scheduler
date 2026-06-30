@@ -275,16 +275,12 @@ function buildWeeklyService(template, date, fallbackType, fallbackTime) {
     slots: cloneSlots(template, id),
   };
 }
-function maybeBuildPatternActions(message, role, services) {
-  const lower = message.toLowerCase();
-  if (role !== 'admin') return null;
-  if (!/(continue|extend|through|end of (the )?year|rest of (the )?year)/i.test(lower)) return null;
-  if (!/(friday|saturday|shabbat|pattern)/i.test(lower)) return null;
+function buildPatternActions(services) {
   const existing = new Set(services.map(s => String(s.dateISO)));
   const fridayTemplate = latestServiceFor(services, s => /friday|kabbalat|erev/i.test(`${s.type} ${s.date}`));
   const saturdayTemplate = latestServiceFor(services, s => /saturday|morning/i.test(`${s.type} ${s.date}`));
   const startIso = [fridayTemplate?.dateISO, saturdayTemplate?.dateISO].filter(Boolean).sort().pop();
-  if (!startIso) return null;
+  if (!startIso) return [];
   const start = addDays(new Date(`${startIso}T00:00:00Z`), 1);
   const end = new Date(`${new Date().getUTCFullYear()}-12-31T00:00:00Z`);
   const actions = [];
@@ -295,8 +291,30 @@ function maybeBuildPatternActions(message, role, services) {
     if (day === 5 && fridayTemplate) actions.push({ action: 'create_service', service: buildWeeklyService(fridayTemplate, d, 'Kabbalat Shabbat', '6:30 PM') });
     if (day === 6 && saturdayTemplate) actions.push({ action: 'create_service', service: buildWeeklyService(saturdayTemplate, d, 'Shabbat Morning', '10:00 AM') });
   }
+  return actions;
+}
+function isBulkPatternConfirmation(message, history = []) {
+  if (!CONFIRMATION_RE.test(message.trim())) return false;
+  const priorText = history.slice(-4).map(h => h.content).join('\n').toLowerCase();
+  return /prepared \d+ services through year-end/.test(priorText) && /reply .*?(confirm|go ahead|do it)/.test(priorText);
+}
+function maybeBuildPatternActions(message, role, services, history = []) {
+  const lower = message.toLowerCase();
+  if (role !== 'admin') return null;
+  const isInitialPatternRequest = /(continue|extend|through|end of (the )?year|rest of (the )?year)/i.test(lower) && /(friday|saturday|shabbat|pattern)/i.test(lower);
+  const isConfirmed = isBulkPatternConfirmation(message, history);
+  if (!isInitialPatternRequest && !isConfirmed) return null;
+  const actions = buildPatternActions(services);
   if (!actions.length) return { text: 'The Friday night and Saturday morning pattern already appears to extend through year-end.', actions: [] };
-  return { text: `I found the existing Friday/Saturday pattern and prepared ${actions.length} services through year-end. Creating them now.`, actions };
+  const first = actions[0]?.service;
+  const last = actions[actions.length - 1]?.service;
+  if (!isConfirmed) {
+    return {
+      text: `I found the existing Friday/Saturday pattern and prepared ${actions.length} services through year-end, from ${first.date} to ${last.date}. Reply “confirm”, “go ahead”, or “do it” and I’ll create them.`,
+      actions: [],
+    };
+  }
+  return { text: `Confirmed — creating ${actions.length} Friday/Saturday services through year-end now.`, actions };
 }
 
 export default async function handler(req) {
@@ -327,7 +345,7 @@ export default async function handler(req) {
 
   const role = userRole;
   const services = Array.isArray(body.services) ? body.services : [];
-  const deterministic = maybeBuildPatternActions(sanitized.message, role, services);
+  const deterministic = maybeBuildPatternActions(sanitized.message, role, services, history);
   if (deterministic) {
     await logAiInteraction({
       status: 'ok',
