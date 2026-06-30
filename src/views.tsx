@@ -288,13 +288,35 @@ interface CalendarViewProps {
 
 export function CalendarView({ services, defaultView, user, onOpenAuth, onAssign, onRemove, onSignUp, onRequestCoverage, onSelfRemove, onCreateEvent, onEditEvent, onDeleteEvent }: CalendarViewProps) {
   const [mode, setMode] = useState(defaultView || 'list');
+  const [showPast, setShowPast] = useState(false);
   useEffect(() => { setMode(defaultView || 'list'); }, [defaultView]);
+
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const { pastServices, upcomingServices } = useMemo(() => {
+    const sorted = [...services].sort((a, b) => String(a.dateISO).localeCompare(String(b.dateISO)));
+    return {
+      pastServices: sorted.filter(s => String(s.dateISO) < todayISO),
+      upcomingServices: sorted.filter(s => String(s.dateISO) >= todayISO),
+    };
+  }, [services, todayISO]);
 
   const stats = useMemo(() => {
     let filled = 0, open = 0;
     services.forEach(s => s.slots.forEach(sl => sl.volunteer ? filled++ : open++));
     return { filled, open };
   }, [services]);
+
+  const renderServiceCard = (svc: Service) => (
+    <ServiceCard key={svc.id} svc={svc} mode={user?.role === 'admin' ? 'admin' : 'volunteer'}
+                 currentUserName={user?.name}
+                 onAssign={onAssign} onRemove={onRemove}
+                 onSignUp={(svc, slot) => user ? onSignUp?.(svc, slot, { name: user.name, email: user.email }) : onOpenAuth?.()}
+                 onRequestCoverage={onRequestCoverage}
+                 onSelfRemove={onSelfRemove}
+                 onEdit={user?.role === 'admin' ? onEditEvent : undefined}
+                 onDelete={user?.role === 'admin' ? onDeleteEvent : undefined}
+                 name={user?.name || 'Guest'} email={user?.email || 'guest@example.com'} />
+  );
 
   return (
     <div>
@@ -316,29 +338,40 @@ export function CalendarView({ services, defaultView, user, onOpenAuth, onAssign
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-        <div className="results-pill"><strong>{services.length}</strong> services scheduled</div>
+        <div className="results-pill"><strong>{upcomingServices.length}</strong> upcoming / <strong>{services.length}</strong> total services</div>
         <div className="seg">
           <button aria-pressed={mode === 'list'} onClick={() => setMode('list')}>List</button>
           <button aria-pressed={mode === 'grid'} onClick={() => setMode('grid')}>Grid</button>
         </div>
       </div>
 
+      {pastServices.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="results-pill"
+            aria-expanded={showPast}
+            onClick={() => setShowPast(v => !v)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', border: '1px solid var(--line)', background: 'rgba(255,255,255,.7)' }}>
+            <span><strong>{pastServices.length}</strong> past service{pastServices.length === 1 ? '' : 's'} hidden</span>
+            <span aria-hidden="true">{showPast ? '▾' : '▸'} View previous services</span>
+          </button>
+          {showPast && (
+            <div style={{ display: 'grid', gap: 12, marginTop: 8, opacity: 0.86 }}>
+              {pastServices.map(renderServiceCard)}
+            </div>
+          )}
+        </div>
+      )}
+
       {mode === 'list' ? (
         <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
-          {services.map(svc => (
-            <ServiceCard key={svc.id} svc={svc} mode={user?.role === 'admin' ? 'admin' : 'volunteer'}
-                         currentUserName={user?.name}
-                         onAssign={onAssign} onRemove={onRemove}
-                         onSignUp={(svc, slot) => user ? onSignUp?.(svc, slot, { name: user.name, email: user.email }) : onOpenAuth?.()}
-                         onRequestCoverage={onRequestCoverage}
-                         onSelfRemove={onSelfRemove}
-                         onEdit={user?.role === 'admin' ? onEditEvent : undefined}
-                         onDelete={user?.role === 'admin' ? onDeleteEvent : undefined}
-                         name={user?.name || 'Guest'} email={user?.email || 'guest@example.com'} />
-          ))}
+          {upcomingServices.length ? upcomingServices.map(renderServiceCard) : (
+            <div className="empty-card">No upcoming services scheduled yet.</div>
+          )}
         </div>
       ) : (
-        <GridCalendar services={services}
+        <GridCalendar services={upcomingServices}
                       user={user} onOpenAuth={onOpenAuth}
                       onAssign={onAssign} onRemove={onRemove}
                       onSignUp={onSignUp} onRequestCoverage={onRequestCoverage} onSelfRemove={onSelfRemove}
