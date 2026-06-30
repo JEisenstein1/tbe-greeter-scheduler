@@ -495,14 +495,14 @@ function maybeBuildMyAssignmentsResponse(message, role, services, user) {
   if (role === 'guest' || !user) return null;
   if (!/\b(am i|my|me|i)\b/i.test(message) || !/\b(signed\s*up|sign\s*up|services?|dates?|assignments?|weekend|schedule)\b/i.test(message)) return null;
   const mine = userAssignedSlots(services, user).sort((a, b) => String(a.svc.dateISO).localeCompare(String(b.svc.dateISO)));
-  if (!mine.length) return { text: `${user.name || 'You'} are not currently signed up for any visible services.`, actions: [] };
+  if (!mine.length) return { text: `${user.name || 'You'}, you are not currently signed up for any visible services.`, actions: [] };
   const lines = mine.map(({ svc, slot }) => `- ${svc.date} at ${svc.time} — ${svc.type}: ${slot.role}${slot.timeSlot ? ` (${slot.timeSlot})` : ''}`);
   let weekendLine = '';
   if (/weekend/i.test(message)) {
     const hasWeekend = mine.some((a, idx) => mine.slice(idx + 1).some(b => sameWeekend(a.svc.dateISO, b.svc.dateISO)));
-    weekendLine = hasWeekend ? `\n\nYes — ${user.name || 'you'} appear to be signed up for both services in at least one Friday/Saturday weekend.` : `\n\nI do not see ${user.name || 'you'} signed up for both a Friday and Saturday in the same weekend.`;
+    weekendLine = hasWeekend ? `\n\nYes — ${user.name || 'you'}, you appear to be signed up for both services in at least one Friday/Saturday weekend.` : `\n\nI do not see ${user.name || 'you'} signed up for both a Friday and Saturday in the same weekend.`;
   }
-  return { text: `${user.name || 'You'} are signed up for:\n${lines.join('\n')}${weekendLine}`, actions: [] };
+  return { text: `${user.name || 'You'}, you are signed up for:\n${lines.join('\n')}${weekendLine}`, actions: [] };
 }
 function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
 function dateLabel(date) {
