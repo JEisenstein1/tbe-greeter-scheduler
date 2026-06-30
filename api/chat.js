@@ -240,9 +240,63 @@ function actionIntentPermitsTools(message, actionName, history = []) {
     return /\b(request coverage|need coverage|find (me )?(a )?substitute|need a sub|replace me)\b/i.test(lower);
   }
   if (actionName === 'create_service') {
-    return /\b(create|add|schedule|set up)\b.*\b(service|shabbat|havdalah|rosh hashanah|yom kippur|high holiday)\b/i.test(lower);
+    return /\b(create|add|schedule|set up|continue|extend)\b.*\b(service|shabbat|havdalah|rosh hashanah|yom kippur|high holiday|pattern|year)\b/i.test(lower);
   }
   return false;
+}
+
+function isoDate(date) { return date.toISOString().slice(0, 10); }
+function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
+function dateLabel(date) {
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+}
+function latestServiceFor(services, predicate) {
+  return services.filter(predicate).sort((a, b) => String(b.dateISO).localeCompare(String(a.dateISO)))[0] || null;
+}
+function cloneSlots(template, serviceId) {
+  const slots = Array.isArray(template?.slots) && template.slots.length ? template.slots : [{ role: 'Greeter', timeSlot: null }];
+  return slots.map((slot, index) => ({
+    id: `${serviceId}-s${index + 1}`,
+    role: slot.role || 'Greeter',
+    timeSlot: slot.timeSlot || null,
+    volunteer: null,
+    volunteerEmail: null,
+  }));
+}
+function buildWeeklyService(template, date, fallbackType, fallbackTime) {
+  const id = `${String(fallbackType).toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${isoDate(date)}`;
+  return {
+    id,
+    dateISO: isoDate(date),
+    date: dateLabel(date),
+    time: template?.time || fallbackTime,
+    type: template?.type || fallbackType,
+    isHH: !!template?.isHH,
+    slots: cloneSlots(template, id),
+  };
+}
+function maybeBuildPatternActions(message, role, services) {
+  const lower = message.toLowerCase();
+  if (role !== 'admin') return null;
+  if (!/(continue|extend|through|end of (the )?year|rest of (the )?year)/i.test(lower)) return null;
+  if (!/(friday|saturday|shabbat|pattern)/i.test(lower)) return null;
+  const existing = new Set(services.map(s => String(s.dateISO)));
+  const fridayTemplate = latestServiceFor(services, s => /friday|kabbalat|erev/i.test(`${s.type} ${s.date}`));
+  const saturdayTemplate = latestServiceFor(services, s => /saturday|morning/i.test(`${s.type} ${s.date}`));
+  const startIso = [fridayTemplate?.dateISO, saturdayTemplate?.dateISO].filter(Boolean).sort().pop();
+  if (!startIso) return null;
+  const start = addDays(new Date(`${startIso}T00:00:00Z`), 1);
+  const end = new Date(`${new Date().getUTCFullYear()}-12-31T00:00:00Z`);
+  const actions = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    const day = d.getUTCDay();
+    const iso = isoDate(d);
+    if (existing.has(iso)) continue;
+    if (day === 5 && fridayTemplate) actions.push({ action: 'create_service', service: buildWeeklyService(fridayTemplate, d, 'Kabbalat Shabbat', '6:30 PM') });
+    if (day === 6 && saturdayTemplate) actions.push({ action: 'create_service', service: buildWeeklyService(saturdayTemplate, d, 'Shabbat Morning', '10:00 AM') });
+  }
+  if (!actions.length) return { text: 'The Friday night and Saturday morning pattern already appears to extend through year-end.', actions: [] };
+  return { text: `I found the existing Friday/Saturday pattern and prepared ${actions.length} services through year-end. Creating them now.`, actions };
 }
 
 export default async function handler(req) {
@@ -273,6 +327,22 @@ export default async function handler(req) {
 
   const role = userRole;
   const services = Array.isArray(body.services) ? body.services : [];
+  const deterministic = maybeBuildPatternActions(sanitized.message, role, services);
+  if (deterministic) {
+    await logAiInteraction({
+      status: 'ok',
+      latencyMs: Date.now() - startedAt,
+      prompt: sanitized.message,
+      userRole,
+      userEmail,
+      model: 'deterministic-pattern-builder',
+      responseText: deterministic.text,
+      actionCount: deterministic.actions.length,
+      actionTypes: deterministic.actions.map(action => action.action),
+      metadata: { serviceCount: services.length, scopeReason: scope.reason, deterministic: true },
+    });
+    return jsonResponse(deterministic);
+  }
 
   try {
     const tools = role === 'volunteer' ? TOOL_DEFINITIONS.filter(t => t.function.name !== 'create_service') : TOOL_DEFINITIONS;

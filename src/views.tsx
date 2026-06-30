@@ -14,7 +14,7 @@ interface AIViewProps {
   services: Service[];
   onAIVolunteerSignup: (svcId: string | number, slotId: string, vol: { name: string; email: string }) => void;
   onAIRequestCoverage: (svcId: string | number, slotId: string) => void;
-  onAICreateService: (svc: Service) => void;
+  onAICreateService: (svc: Service) => void | Promise<void>;
 }
 
 interface ActionCard {
@@ -134,7 +134,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
             finalCard = { title: 'Looking for a substitute', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Coverage requested — admin notified']] };
           }
         } else if (act.action === 'create_service' && act.service) {
-          onAICreateService(act.service);
+          await onAICreateService(act.service);
           finalCard = { title: act.service.type, rows: [['Date', act.service.date], ['Time', act.service.time], ['Slots', `${act.service.slots.length} total`]] };
         }
       }
