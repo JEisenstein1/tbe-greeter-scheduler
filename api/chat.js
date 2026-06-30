@@ -14,8 +14,8 @@ const ALLOWED_PATTERNS = [
   /\b(greeters?|ushers?|parking attendants?|volunteers?|services?|shabbat|havdalah|rosh hashanah|yom kippur|high holidays?)\b/i,
   /\b(sign\s?up|signed\s+up|signup|schedule|scheduled|scheduling|availability|available|slot|coverage|substitute|reminder|calendar|admin|shift|dates?|assignments?|commitments?)\b/i,
   /\b(what|show|list|when|am)\b.*\b(my|i)\b.*\b(dates?|services?|schedule|assignments?|signed\s+up)\b/i,
-  /\b(add|assign|put|remove|unassign|take\s+off)\b.*\b(me|volunteer|greeter|usher|friday|saturday|shabbat|service|slot|roster)\b/i,
-  /\b(add|assign|put)\b\s+\w+\s+\b(for|to|on)\b\s+\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i,
+  /\b(add|assign|schedule|put|remove|unassign|take\s+off)\b.*\b(me|volunteer|greeter|usher|friday|saturday|shabbat|service|slot|roster)\b/i,
+  /\b(add|assign|schedule|put)\b\s+\w+\s+\b(for|to|on)\b\s+\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i,
 ];
 
 const DISALLOWED_PATTERNS = [
@@ -180,6 +180,14 @@ export function sanitizeUserMessage(rawMessage) {
   return { ok: true, message: normalized };
 }
 
+function isSchedulingFollowUp(message, history = []) {
+  const lower = message.toLowerCase();
+  if (!/\b(how about|what about|next|this|following|same|that one|yes|no|friday|saturday|shabbat|morning|evening)\b/i.test(lower)) return false;
+  const priorText = history.slice(-4).map(h => h.content).join('\n').toLowerCase();
+  if (!priorText) return false;
+  return ALLOWED_PATTERNS.some(pattern => pattern.test(priorText)) || /\b(add|assign|schedule|remove|debbie|volunteer|slot|service)\b/i.test(priorText);
+}
+
 function classifyMessageScope(message, history = []) {
   const lower = message.toLowerCase();
   if (DISALLOWED_PATTERNS.some(pattern => pattern.test(lower))) {
@@ -190,6 +198,9 @@ function classifyMessageScope(message, history = []) {
   }
   if (isConfirmationFollowUp(message, history)) {
     return { allowed: true, reason: 'confirmation_followup' };
+  }
+  if (isSchedulingFollowUp(message, history)) {
+    return { allowed: true, reason: 'scheduling_followup' };
   }
   return { allowed: false, reason: 'off_topic' };
 }
@@ -385,6 +396,15 @@ function serviceMatchesWhen(svc, message) {
   if (/\bshabbat\b/.test(lower) && /shabbat|kabbalat/.test(hay)) return true;
   return false;
 }
+function pickServiceForMessage(services, message) {
+  const matches = services
+    .filter(s => serviceMatchesWhen(s, message))
+    .sort((a, b) => String(a.dateISO || '').localeCompare(String(b.dateISO || '')));
+  if (!matches.length) return null;
+  if (/\bnext\b/i.test(message) && matches.length > 1) return matches[1];
+  if (/\bthis\b/i.test(message)) return matches[0];
+  return matches[0];
+}
 function bestSlotForMessage(svc, message, requireOpen = false, user = null) {
   const slots = Array.isArray(svc?.slots) ? svc.slots : [];
   const candidates = slots.filter(sl => {
@@ -412,14 +432,14 @@ function volunteerMatches(volunteers, token) {
   });
 }
 function extractRequestedVolunteerName(message) {
-  const match = message.match(/\b(?:add|assign|put|sign up)\s+([a-z][a-z.'-]*)\b/i);
+  const match = message.match(/\b(?:add|assign|schedule|put|sign up)\s+([a-z][a-z.'-]*)\b/i);
   const name = match?.[1];
   if (!name || /^(me|a|an|the|volunteer|greeter|usher)$/i.test(name)) return '';
   return name;
 }
 function maybeBuildAdminAssignmentAction(message, role, services, volunteers = []) {
   if (role !== 'admin') return null;
-  if (!/\b(add|assign|put|sign up)\b/i.test(message) || !/\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(message)) return null;
+  if (!/\b(add|assign|schedule|put|sign up)\b/i.test(message) || !/\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(message)) return null;
   const requestedName = extractRequestedVolunteerName(message);
   if (!requestedName) return null;
   const matches = volunteerMatches(volunteers, requestedName).filter(v => v?.active !== false);
@@ -429,7 +449,7 @@ function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [
   if (matches.length === 0) {
     return { text: `I couldn't find a volunteer matching “${requestedName}.” Please use a full name or email.`, actions: [] };
   }
-  const svc = services.find(s => serviceMatchesWhen(s, message));
+  const svc = pickServiceForMessage(services, message);
   if (!svc) return { text: `I couldn't find a matching service for that request. Which service should I use?`, actions: [] };
   const slot = bestSlotForMessage(svc, message, true);
   if (!slot) return { text: `${svc.type} on ${svc.date} does not have an open matching slot.`, actions: [] };
@@ -442,7 +462,7 @@ function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [
 function maybeBuildRemoveSignupAction(message, role, services, user) {
   if (role === 'guest' || !user) return null;
   if (!/\b(remove|unassign|take\s+off|take me off|drop me)\b/i.test(message)) return null;
-  const svc = services.find(s => serviceMatchesWhen(s, message));
+  const svc = pickServiceForMessage(services, message);
   if (!svc) return { text: `I couldn't find the matching service to remove you from. Which date/service did you mean?`, actions: [] };
   const slot = bestSlotForMessage(svc, message, false, user);
   if (!slot) return { text: `I don't see you assigned to ${svc.type} on ${svc.date}.`, actions: [] };

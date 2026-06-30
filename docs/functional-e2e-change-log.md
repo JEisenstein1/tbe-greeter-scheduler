@@ -52,6 +52,15 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Tests: extended `src/__tests__/chat-handler-behavior.test.ts` for unique Debbie assignment, multiple-Debbie clarification, and remove-me action.
 - Rollback: reset to `pre-fix-ai-intent-refinement-20260630T113133Z` or revert the AI intent refinement commit.
 
+## 2026-06-30 — AI roster/follow-up continuity fix
+
+- Pre-debug snapshot: `pre-debug-ai-followup-20260630T155822Z`
+- Finding from `ai_interaction_log`: real prompts `schedule Debbie for next friday` and `Can you look up Debbie and schedule her for next friday?` fell through to the model, which said it had no roster lookup; follow-up `How about next friday` was blocked as off-topic.
+- Root cause: deterministic assignment only recognized `add/assign/put/sign up`, not `schedule`; short date-only follow-ups were classified without prior-turn scheduling context; `next Friday` selection did not explicitly choose the second matching Friday service.
+- Change: added `schedule` as an admin assignment verb, added scheduling-context follow-up classification, and added service picking that distinguishes `this` vs `next` matching service.
+- Tests: extended `src/__tests__/chat-handler-behavior.test.ts` with real-log regressions for `schedule Debbie for next friday` and `How about next Friday`.
+- Rollback: reset to `pre-debug-ai-followup-20260630T155822Z` or revert the roster/follow-up continuity commit.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.
