@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { Service, Slot, User, Volunteer, Admin, Toast } from './types';
 import { VOLUNTEERS, ADMINS } from './data';
-import { lookupMockAuthUser, nameFromEmail } from './appLogic';
+import { lookupMockAuthUser } from './appLogic';
 import { statusFor, groupSlotsByTime, wdShort, dayNum, moShort } from './helpers';
 
 // ── Icons ────────────────────────────────────────────────────
@@ -461,23 +461,10 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
     setErr('No account found for that email. Continue as guest to sign up anyway.');
   };
 
-  const tryGoogle = async () => {
+  const tryGoogle = () => {
     setErr('');
-    if (!email.trim()) {
-      setErr('Enter your email address above first.');
-      return;
-    }
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
-    setLoading(false);
-    const match = lookupMockAuthUser(email, 'google');
-    if (match) {
-      const { verifiedByProvider: _verifiedByProvider, ...user } = match;
-      onSignIn(user);
-      return;
-    }
-    // Demo-only: no Google OAuth token is validated yet.
-    onSignIn({ name: nameFromEmail(email.trim()), email: email.trim(), source: 'google', role: 'volunteer' });
+    window.location.href = '/api/auth/google/start';
   };
 
   const tryGuest = () => {
@@ -510,9 +497,9 @@ export function AuthSheet({ onClose, onSignIn, suggested }: AuthSheetProps) {
               </div>
               <button className="auth-google" onClick={tryGoogle} disabled={loading}>
                 <GoogleLogo />
-                {loading ? 'Connecting…' : 'Continue with Google (demo)'}
+                {loading ? 'Connecting…' : 'Continue with Google'}
               </button>
-              <div className="hint">Prototype only: this matches the email against the roster; it does not validate a Google OAuth account yet.</div>
+              <div className="hint">Uses Google sign-in. Admin access is granted by the Temple Beth El allowlist.</div>
               <div className="auth-divider">or sign in with password</div>
               <div className="auth-field">
                 <label>Password</label>
