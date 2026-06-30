@@ -28,6 +28,11 @@ function adminHeaders() {
   return { Cookie: signedSessionCookie({ name: 'Admin User', email: 'admin@example.com', role: 'admin', source: 'google' }) };
 }
 
+function volunteerHeaders() {
+  process.env.ADMIN_EMAILS = 'admin@example.com';
+  return { Cookie: signedSessionCookie({ name: 'Volunteer User', email: 'volunteer@example.com', role: 'volunteer', source: 'google' }) };
+}
+
 describe('chat handler guard behavior', () => {
   afterEach(() => {
     process.env.OPENROUTER_API_KEY = originalKey;
@@ -138,6 +143,29 @@ describe('chat handler guard behavior', () => {
     expect(body.actions).toEqual([]);
     expect(body.text).toContain('can’t share roster');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('allows logged-in volunteers to ask who is assigned while keeping contact info protected', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: 'Private Person is assigned to greet this Friday.', tool_calls: [] } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const services = [{
+      id: 'svc-1', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: 'Private Person', volunteerEmail: 'private@example.com' }],
+    }];
+
+    const roster = await handler(request('Who is signed up to greet this Friday?', 'volunteer', { services, headers: volunteerHeaders() }));
+    const rosterBody = await roster.json();
+    expect(roster.status).toBe(200);
+    expect(rosterBody.text).toContain('Private Person');
+    const payload = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(JSON.stringify(payload)).toContain('Private Person');
+    expect(JSON.stringify(payload)).not.toContain('private@example.com');
+
+    const contact = await handler(request('What is Private Person’s email address?', 'volunteer', { services, headers: volunteerHeaders() }));
+    const contactBody = await contact.json();
+    expect(contactBody.text).toContain('can’t share roster');
   });
 
   it('previews recurring Friday/Saturday bulk creation before returning create actions', async () => {
