@@ -145,6 +145,45 @@ describe('chat handler guard behavior', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('answers my-schedule questions using the signed session user, not another visible volunteer', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    process.env.ADMIN_EMAILS = 'jon@example.com';
+    const headers = { Cookie: signedSessionCookie({ name: 'Jon Eisenstein', email: 'jon@example.com', role: 'admin', source: 'google' }) };
+    const services = [
+      { id: 'fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] },
+      { id: 'sat', dateISO: '2026-07-04', date: 'Saturday, July 4', time: '9:30 AM', type: 'Shabbat Morning', isHH: false, slots: [{ id: 's1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] },
+      { id: 'debbie', dateISO: '2026-07-10', date: 'Friday, July 10', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'd1', role: 'Greeter', timeSlot: null, volunteer: 'Debbie Adler-Klein', volunteerEmail: 'dakmd75@gmail.com' }] },
+    ];
+
+    const res = await handler(request('am I signed up for a weekend?', 'admin', { services, headers, user: { name: 'Wrong Client User', email: 'wrong@example.com' } }));
+    const body = await res.json();
+
+    expect(body.text).toContain('Jon Eisenstein');
+    expect(body.text).toContain('Friday, July 3');
+    expect(body.text).toContain('Saturday, July 4');
+    expect(body.text).not.toContain('Debbie Adler-Klein');
+    expect(body.actions).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not treat my-schedule questions as admin volunteer assignment requests', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    process.env.ADMIN_EMAILS = 'jon@example.com';
+    const headers = { Cookie: signedSessionCookie({ name: 'Jon Eisenstein', email: 'jon@example.com', role: 'admin', source: 'google' }) };
+    const services = [{ id: 'fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] }];
+
+    const res = await handler(request('what services am I sign up for (not Debbie)', 'admin', { services, volunteers: [{ name: 'Debbie Adler-Klein', email: 'dakmd75@gmail.com', active: true }], headers }));
+    const body = await res.json();
+
+    expect(body.text).toContain('Jon Eisenstein');
+    expect(body.text).toContain('Friday, July 3');
+    expect(body.text).not.toContain('matching “for”');
+    expect(body.actions).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('allows logged-in volunteers to ask who is assigned while keeping contact info protected', async () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({

@@ -475,6 +475,35 @@ function maybeBuildRemoveSignupAction(message, role, services, user) {
     actions: [{ action: 'remove_signup', svcId: String(svc.id), slotId: slot.id }],
   };
 }
+function userAssignedSlots(services, user) {
+  if (!user?.email && !user?.name) return [];
+  return services.flatMap(svc => (Array.isArray(svc.slots) ? svc.slots : [])
+    .filter(slot => {
+      const emailMatch = user.email && slot.volunteerEmail && String(slot.volunteerEmail).toLowerCase() === String(user.email).toLowerCase();
+      const nameMatch = user.name && slot.volunteer && norm(slot.volunteer) === norm(user.name);
+      return emailMatch || nameMatch;
+    })
+    .map(slot => ({ svc, slot })));
+}
+function sameWeekend(a, b) {
+  const da = new Date(`${a}T00:00:00Z`);
+  const db = new Date(`${b}T00:00:00Z`);
+  const diff = Math.abs((db.getTime() - da.getTime()) / 86400000);
+  return diff <= 1 && da.getUTCDay() !== db.getUTCDay();
+}
+function maybeBuildMyAssignmentsResponse(message, role, services, user) {
+  if (role === 'guest' || !user) return null;
+  if (!/\b(am i|my|me|i)\b/i.test(message) || !/\b(signed\s*up|sign\s*up|services?|dates?|assignments?|weekend|schedule)\b/i.test(message)) return null;
+  const mine = userAssignedSlots(services, user).sort((a, b) => String(a.svc.dateISO).localeCompare(String(b.svc.dateISO)));
+  if (!mine.length) return { text: `${user.name || 'You'} are not currently signed up for any visible services.`, actions: [] };
+  const lines = mine.map(({ svc, slot }) => `- ${svc.date} at ${svc.time} — ${svc.type}: ${slot.role}${slot.timeSlot ? ` (${slot.timeSlot})` : ''}`);
+  let weekendLine = '';
+  if (/weekend/i.test(message)) {
+    const hasWeekend = mine.some((a, idx) => mine.slice(idx + 1).some(b => sameWeekend(a.svc.dateISO, b.svc.dateISO)));
+    weekendLine = hasWeekend ? `\n\nYes — ${user.name || 'you'} appear to be signed up for both services in at least one Friday/Saturday weekend.` : `\n\nI do not see ${user.name || 'you'} signed up for both a Friday and Saturday in the same weekend.`;
+  }
+  return { text: `${user.name || 'You'} are signed up for:\n${lines.join('\n')}${weekendLine}`, actions: [] };
+}
 function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
 function dateLabel(date) {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
@@ -580,9 +609,10 @@ export default async function handler(req) {
   const role = userRole;
   const rawServices = Array.isArray(body.services) ? body.services : [];
   const services = redactServicesForRole(rawServices, sessionUser, role);
+  const deterministicMyAssignments = maybeBuildMyAssignmentsResponse(sanitized.message, role, services, sessionUser);
   const deterministicAssignment = maybeBuildAdminAssignmentAction(sanitized.message, role, services, body?.volunteers || [], history);
   const deterministicRemoval = maybeBuildRemoveSignupAction(sanitized.message, role, services, sessionUser);
-  const simpleDeterministic = deterministicAssignment || deterministicRemoval;
+  const simpleDeterministic = deterministicMyAssignments || deterministicAssignment || deterministicRemoval;
   if (simpleDeterministic) {
     simpleDeterministic.actions = filterActionsByRole(simpleDeterministic.actions, role);
     await logAiInteraction({
@@ -636,7 +666,7 @@ export default async function handler(req) {
         max_tokens: 1024,
         temperature: 0.2,
         messages: [
-          { role: 'system', content: buildSystemPrompt(role, body.user, services) },
+          { role: 'system', content: buildSystemPrompt(role, sessionUser, services) },
           ...history,
           { role: 'user', content: sanitized.message },
         ],
