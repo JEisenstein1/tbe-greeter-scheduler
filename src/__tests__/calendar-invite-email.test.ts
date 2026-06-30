@@ -34,11 +34,13 @@ describe('calendar invite email payloads', () => {
     const raw = Buffer.from(buildRawEmail({
       from: 'Travis <travis.thybot@gmail.com>',
       to: volunteer.volEmail,
-      subject: 'Temple Beth El greeter confirmation',
+      subject: "You're scheduled — Kabbalat Shabbat, Friday, June 5",
       text: 'Confirmation text',
       calendarInvite: invite,
     }).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
 
+    expect(raw).toContain('Subject: =?UTF-8?B?WW91J3JlIHNjaGVkdWxlZCDigJQgS2FiYmFsYXQgU2hhYmJhdCwgRnJpZGF5LCBKdW5lIDU=?=');
+    expect(raw).not.toContain('Subject: You\'re scheduled —');
     expect(raw).toContain('Content-Type: multipart/mixed; boundary=');
     expect(raw).toContain('Content-Type: text/calendar; charset=utf-8; method=REQUEST; name="tbe-greeter-svc-calendar-test-slot-calendar-test.ics"');
     expect(raw).toContain('Content-Disposition: attachment; filename="tbe-greeter-svc-calendar-test-slot-calendar-test.ics"');

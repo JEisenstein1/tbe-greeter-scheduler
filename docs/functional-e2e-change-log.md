@@ -36,6 +36,14 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - App code changed: none.
 - Rollback: revert the script change only.
 
+## 2026-06-30 — Email subject MIME encoding fix
+
+- Pre-fix snapshot: `pre-fix-email-subject-encoding-20260630T105651Z`
+- Finding: Gmail stored the subject as `You're scheduled Ã¢Â€Â” ...`; the em dash was sent as raw UTF-8 in a MIME header instead of RFC 2047 encoded-word format.
+- Change: `api/services/signup.js` now RFC 2047/base64-encodes non-ASCII Subject headers in both plain and multipart Gmail MIME messages.
+- Tests: extended `src/__tests__/calendar-invite-email.test.ts` to assert encoded non-ASCII subject headers.
+- Rollback: reset to `pre-fix-email-subject-encoding-20260630T105651Z` or revert the subject-encoding commit.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.
