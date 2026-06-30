@@ -123,14 +123,14 @@ async function main() {
   assert(afterCreate.body.services.some(s => s.id === serviceId), 'created service should appear');
   log('service persisted after create');
 
-  const signup = await request('POST', '/api/services/signup', { serviceId, slotId: `${serviceId}-slot-1`, name: 'E2E Volunteer', email: EMAIL_TEST }, { Cookie: volunteerCookie() });
+  const signup = await request('POST', '/api/services/signup', { serviceId, slotId: `${serviceId}-slot-1`, name: 'Ignored Posted Name', email: EMAIL_TEST }, { Cookie: volunteerCookie() });
   assert(signup.status === 200 && signup.body?.ok, 'signup should succeed', signup);
   assert(signup.body.delivery?.status !== 'disabled', 'email delivery should not be disabled', signup.body.delivery);
   log('signup persisted + email attempted', `${signup.body.delivery?.provider || 'unknown'}:${signup.body.delivery?.status || 'unknown'}`);
 
   const afterSignup = await request('GET', '/api/services');
   const signedSvc = afterSignup.body.services.find(s => s.id === serviceId);
-  assert(signedSvc?.slots?.find(sl => sl.id === `${serviceId}-slot-1`)?.volunteerEmail === EMAIL_TEST, 'signup should fill slot');
+  assert(signedSvc?.slots?.find(sl => sl.id === `${serviceId}-slot-1`)?.volunteerEmail === VOL_EMAIL, 'signed-in volunteer signup should use session email, not posted email');
   log('slot filled after signup');
 
   const coverage = await request('POST', '/api/services/request-coverage', { serviceId, slotId: `${serviceId}-slot-1` }, { Cookie: volunteerCookie() });

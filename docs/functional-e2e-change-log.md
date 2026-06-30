@@ -11,6 +11,15 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Reason: Baseline before adding comprehensive functional E2E scripts and any test-driven fixes.
 - Rollback: `git reset --hard pre-functional-e2e-20260630T043343Z` plus Vercel rollback if production deploy changes need reverting.
 
+## 2026-06-30 — Production E2E script correction
+
+- Pre-fix snapshot: `pre-fix-signup-readback-20260630T043920Z`
+- Finding: initial E2E expected the posted email to fill a slot during signed-in volunteer signup.
+- Actual/correct behavior: signed-in volunteer signup uses the signed session user email, ignoring posted name/email. This prevents impersonation.
+- Change: updated `scripts/e2e/production-functional-e2e.mjs` to assert `TBE_VOLUNTEER_EMAIL` for signed-in volunteer signup and use the posted email only as an ignored spoof value.
+- App code changed: none.
+- Rollback: revert the script change to restore prior assertion; no production code rollback needed.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.
