@@ -191,7 +191,7 @@ describe('chat handler guard behavior', () => {
     ];
     const volunteers = [{ name: 'Debbie Adler-Klein', email: 'dakmd75@gmail.com', active: true }];
 
-    const res = await handler(request('schedule Debbie for next friday', 'admin', { services, volunteers, headers: adminHeaders() }));
+    const res = await handler(request('Can you look up Debbie and schedule her for next friday?', 'admin', { services, volunteers, headers: adminHeaders() }));
     const body = await res.json();
 
     expect(res.status).toBe(200);

@@ -432,9 +432,11 @@ function volunteerMatches(volunteers, token) {
   });
 }
 function extractRequestedVolunteerName(message) {
+  const lookup = message.match(/\b(?:look up|find)\s+([a-z][a-z.'-]*)\b/i);
+  if (lookup?.[1] && !/^(me|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(lookup[1])) return lookup[1];
   const match = message.match(/\b(?:add|assign|schedule|put|sign up)\s+([a-z][a-z.'-]*)\b/i);
   const name = match?.[1];
-  if (!name || /^(me|a|an|the|volunteer|greeter|usher)$/i.test(name)) return '';
+  if (!name || /^(me|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(name)) return '';
   return name;
 }
 function maybeBuildAdminAssignmentAction(message, role, services, volunteers = []) {
