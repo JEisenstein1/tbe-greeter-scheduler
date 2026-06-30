@@ -29,7 +29,7 @@ const DISALLOWED_PATTERNS = [
 ];
 
 const CONTACT_INFO_PATTERNS = [
-  /\b(email addresses?|emails?|phone numbers?|contact info|personal information|pii)\b/i,
+  /\b(email address(es)?|emails?|phone number(s)?|contact info|personal information|pii)\b/i,
   /\b(how do i contact|contact details?|reach (them|him|her)|text (them|him|her)|call (them|him|her))\b/i,
 ];
 
@@ -454,15 +454,15 @@ export default async function handler(req) {
     return jsonResponse({ error: sanitized.error }, 400);
   }
 
+  if (userRole !== 'admin' && isPrivateRosterRequest(sanitized.message, userRole)) {
+    await logAiInteraction({ status: 'blocked_private_data', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: PRIVATE_DATA_REFUSAL_TEXT, metadata: { reason: 'private_roster_request' } });
+    return jsonResponse({ text: PRIVATE_DATA_REFUSAL_TEXT, actions: [] });
+  }
   const history = normalizeHistory(body?.history);
   const scope = classifyMessageScope(sanitized.message, history);
   if (!scope.allowed) {
     await logAiInteraction({ status: 'blocked', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: REFUSAL_TEXT, metadata: { reason: scope.reason } });
     return jsonResponse({ text: REFUSAL_TEXT, actions: [] });
-  }
-  if (userRole !== 'admin' && isPrivateRosterRequest(sanitized.message, userRole)) {
-    await logAiInteraction({ status: 'blocked_private_data', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: PRIVATE_DATA_REFUSAL_TEXT, metadata: { reason: 'private_roster_request' } });
-    return jsonResponse({ text: PRIVATE_DATA_REFUSAL_TEXT, actions: [] });
   }
 
   const role = userRole;
