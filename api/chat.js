@@ -1,5 +1,7 @@
 export const config = { runtime: 'edge' };
 
+import { neon } from '@neondatabase/serverless';
+
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_MESSAGE_LENGTH = 2000;
 const CONTROL_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
@@ -49,6 +51,53 @@ function jsonResponse(payload, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function databaseUrl() {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+}
+
+function safeSnippet(value, max = 1200) {
+  return typeof value === 'string' ? value.slice(0, max) : '';
+}
+
+async function ensureAiLogTable(sql) {
+  await sql`CREATE TABLE IF NOT EXISTS ai_interaction_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_email TEXT,
+    user_role TEXT,
+    model TEXT,
+    status TEXT NOT NULL,
+    latency_ms INTEGER,
+    prompt TEXT,
+    response_text TEXT,
+    response_chars INTEGER,
+    action_count INTEGER,
+    action_types TEXT[],
+    error TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+  )`;
+}
+
+async function logAiInteraction(entry) {
+  const url = databaseUrl();
+  if (!url) return;
+  try {
+    const sql = neon(url);
+    await ensureAiLogTable(sql);
+    await sql`INSERT INTO ai_interaction_log(
+      user_email, user_role, model, status, latency_ms, prompt, response_text,
+      response_chars, action_count, action_types, error, metadata
+    ) VALUES(
+      ${entry.userEmail || null}, ${entry.userRole || null}, ${entry.model || null}, ${entry.status},
+      ${Number.isFinite(entry.latencyMs) ? Math.round(entry.latencyMs) : null},
+      ${safeSnippet(entry.prompt)}, ${safeSnippet(entry.responseText)}, ${entry.responseText ? entry.responseText.length : 0},
+      ${entry.actionCount || 0}, ${entry.actionTypes || []}, ${entry.error || null}, ${JSON.stringify(entry.metadata || {})}
+    )`;
+  } catch (err) {
+    console.error('AI telemetry log failed', err?.message || err);
+  }
 }
 
 export function sanitizeUserMessage(rawMessage) {
@@ -197,22 +246,32 @@ function actionIntentPermitsTools(message, actionName, history = []) {
 }
 
 export default async function handler(req) {
+  const startedAt = Date.now();
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
   const apiKey = process.env.OPENROUTER_API_KEY;
+  const model = process.env.OPENROUTER_MODEL || 'openai/gpt-5.5';
   if (!apiKey) return jsonResponse({ error: 'OPENROUTER_API_KEY is not set' }, 500);
 
   let body;
   try { body = await req.json(); } catch { return jsonResponse({ error: 'Invalid JSON' }, 400); }
 
   const sanitized = sanitizeUserMessage(body?.message);
-  if (!sanitized.ok) return jsonResponse({ error: sanitized.error }, 400);
+  const userRole = body?.role === 'admin' ? 'admin' : 'volunteer';
+  const userEmail = body?.user?.email;
+  if (!sanitized.ok) {
+    await logAiInteraction({ status: 'rejected', latencyMs: Date.now() - startedAt, prompt: String(body?.message || ''), userRole, userEmail, model, error: sanitized.error });
+    return jsonResponse({ error: sanitized.error }, 400);
+  }
 
   const history = normalizeHistory(body?.history);
   const scope = classifyMessageScope(sanitized.message, history);
-  if (!scope.allowed) return jsonResponse({ text: REFUSAL_TEXT, actions: [] });
+  if (!scope.allowed) {
+    await logAiInteraction({ status: 'blocked', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: REFUSAL_TEXT, metadata: { reason: scope.reason } });
+    return jsonResponse({ text: REFUSAL_TEXT, actions: [] });
+  }
 
-  const role = body.role === 'admin' ? 'admin' : 'volunteer';
+  const role = userRole;
   const services = Array.isArray(body.services) ? body.services : [];
 
   try {
@@ -226,7 +285,7 @@ export default async function handler(req) {
         'X-Title': process.env.OPENROUTER_APP_NAME || 'Temple Beth-El Greeter Scheduler',
       },
       body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL || 'openai/gpt-5.5',
+        model,
         max_tokens: 1024,
         temperature: 0.2,
         messages: [
@@ -240,15 +299,30 @@ export default async function handler(req) {
     });
 
     if (!openRouterRes.ok) {
-      console.error('OpenRouter API error', openRouterRes.status, await openRouterRes.text());
+      const errorText = await openRouterRes.text();
+      console.error('OpenRouter API error', openRouterRes.status, errorText);
+      await logAiInteraction({ status: 'provider_error', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, error: `OpenRouter ${openRouterRes.status}: ${errorText.slice(0, 500)}` });
       return jsonResponse({ error: `OpenRouter API request failed (${openRouterRes.status})` }, 502);
     }
 
     const result = extractOpenRouterResponse(await openRouterRes.json());
     result.actions = result.actions.filter(action => actionIntentPermitsTools(sanitized.message, action.action, history));
+    await logAiInteraction({
+      status: 'ok',
+      latencyMs: Date.now() - startedAt,
+      prompt: sanitized.message,
+      userRole,
+      userEmail,
+      model,
+      responseText: result.text,
+      actionCount: result.actions.length,
+      actionTypes: result.actions.map(action => action.action),
+      metadata: { serviceCount: services.length, scopeReason: scope.reason },
+    });
     return jsonResponse(result);
   } catch (err) {
     console.error('Chat endpoint error', err);
+    await logAiInteraction({ status: 'error', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, error: err?.message || String(err) });
     return jsonResponse({ error: 'Chat endpoint failed' }, 500);
   }
 }
