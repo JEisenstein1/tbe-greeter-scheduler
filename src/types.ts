@@ -96,6 +96,8 @@ export interface ChatMessage {
 export type SSEEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_action'; action: 'sign_me_up'; svcId: string; slotId: string }
+  | { type: 'tool_action'; action: 'assign_volunteer'; svcId: string; slotId: string; volunteerName: string; volunteerEmail: string }
+  | { type: 'tool_action'; action: 'remove_signup'; svcId: string; slotId: string }
   | { type: 'tool_action'; action: 'request_coverage'; svcId: string; slotId: string }
   | { type: 'tool_action'; action: 'create_service'; service: Service }
   | { type: 'done' }

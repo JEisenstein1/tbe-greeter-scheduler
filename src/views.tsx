@@ -13,6 +13,7 @@ interface AIViewProps {
   user: User | null;
   services: Service[];
   onAIVolunteerSignup: (svcId: string | number, slotId: string, vol: { name: string; email: string }) => void;
+  onAIRemoveSignup: (svcId: string | number, slotId: string) => void;
   onAIRequestCoverage: (svcId: string | number, slotId: string) => void;
   onAICreateService: (svc: Service) => void | Promise<void>;
 }
@@ -41,7 +42,7 @@ function ActionCard({ card }: { card: ActionCard }) {
   );
 }
 
-export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverage, onAICreateService }: AIViewProps) {
+export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, onAIRequestCoverage, onAICreateService }: AIViewProps) {
   const effectiveRole = user?.role === 'admin' ? 'admin' : 'volunteer';
   const isGuest = !user;
 
@@ -101,6 +102,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
             type: s.type, isHH: s.isHH,
             slots: s.slots.map(sl => ({ id: sl.id, role: sl.role, timeSlot: sl.timeSlot, volunteer: sl.volunteer, volunteerEmail: sl.volunteerEmail, coverageRequested: sl.coverageRequested })),
           })),
+          volunteers: user?.role === 'admin' ? VOLUNTEERS.filter(v => v.active).map(v => ({ name: v.name, email: v.email, active: v.active })) : [],
         }),
         signal: abortRef.current.signal,
       });
@@ -110,7 +112,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
         throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
       }
 
-      const data = await response.json() as { text: string; actions: { action: string; svcId?: string; slotId?: string; service?: Service }[]; error?: string };
+      const data = await response.json() as { text: string; actions: { action: string; svcId?: string; slotId?: string; volunteerName?: string; volunteerEmail?: string; service?: Service }[]; error?: string };
 
       if (data.error) throw new Error(data.error);
 
@@ -120,11 +122,26 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
 
       for (const act of data.actions ?? []) {
         if (act.action === 'sign_me_up' && act.svcId && act.slotId) {
-          onAIVolunteerSignup(act.svcId, act.slotId, { name: user!.name, email: user!.email });
+          if (!user) continue;
+          onAIVolunteerSignup(act.svcId, act.slotId, { name: user.name, email: user.email });
           const svc = services.find(s => String(s.id) === String(act.svcId));
           const slot = svc?.slots.find(sl => sl.id === act.slotId);
           if (svc && slot) {
-            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], ['You', `${user!.name} · ${user!.email}`], ['', '✓ Confirmation sent']] };
+            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], ['You', `${user.name} · ${user.email}`], ['', '✓ Confirmation sent']] };
+          }
+        } else if (act.action === 'assign_volunteer' && act.svcId && act.slotId && act.volunteerName && act.volunteerEmail) {
+          onAIVolunteerSignup(act.svcId, act.slotId, { name: act.volunteerName, email: act.volunteerEmail });
+          const svc = services.find(s => String(s.id) === String(act.svcId));
+          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+          if (svc && slot) {
+            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], ['Volunteer', `${act.volunteerName} · ${act.volunteerEmail}`], ['', '✓ Confirmation sent']] };
+          }
+        } else if (act.action === 'remove_signup' && act.svcId && act.slotId) {
+          onAIRemoveSignup(act.svcId, act.slotId);
+          const svc = services.find(s => String(s.id) === String(act.svcId));
+          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+          if (svc && slot) {
+            finalCard = { title: 'Removed from service', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Assignment removed']] };
           }
         } else if (act.action === 'request_coverage' && act.svcId && act.slotId) {
           onAIRequestCoverage(act.svcId, act.slotId);

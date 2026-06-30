@@ -44,6 +44,14 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Tests: extended `src/__tests__/calendar-invite-email.test.ts` to assert encoded non-ASCII subject headers.
 - Rollback: reset to `pre-fix-email-subject-encoding-20260630T105651Z` or revert the subject-encoding commit.
 
+## 2026-06-30 — AI scheduling intent refinement
+
+- Pre-fix snapshot: `pre-fix-ai-intent-refinement-20260630T113133Z`
+- Finding: prompts like `Can you add Debbie for Friday` and `Can you remove me from Friday` were refused as off-topic because the scope classifier required more explicit scheduling keywords.
+- Change: broadened scheduling intent patterns for add/assign/remove language, added admin-only `assign_volunteer`, added `remove_signup`, and added deterministic handling for unique volunteer first-name matches plus ambiguity clarification.
+- Tests: extended `src/__tests__/chat-handler-behavior.test.ts` for unique Debbie assignment, multiple-Debbie clarification, and remove-me action.
+- Rollback: reset to `pre-fix-ai-intent-refinement-20260630T113133Z` or revert the AI intent refinement commit.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.

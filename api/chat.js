@@ -14,6 +14,8 @@ const ALLOWED_PATTERNS = [
   /\b(greeters?|ushers?|parking attendants?|volunteers?|services?|shabbat|havdalah|rosh hashanah|yom kippur|high holidays?)\b/i,
   /\b(sign\s?up|signed\s+up|signup|schedule|scheduled|scheduling|availability|available|slot|coverage|substitute|reminder|calendar|admin|shift|dates?|assignments?|commitments?)\b/i,
   /\b(what|show|list|when|am)\b.*\b(my|i)\b.*\b(dates?|services?|schedule|assignments?|signed\s+up)\b/i,
+  /\b(add|assign|put|remove|unassign|take\s+off)\b.*\b(me|volunteer|greeter|usher|friday|saturday|shabbat|service|slot|roster)\b/i,
+  /\b(add|assign|put)\b\s+\w+\s+\b(for|to|on)\b\s+\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i,
 ];
 
 const DISALLOWED_PATTERNS = [
@@ -317,6 +319,8 @@ Guidelines:
 
 const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'sign_me_up', description: 'Sign the current volunteer up for a specific open slot in a service.', parameters: { type: 'object', properties: { svcId: { type: 'string' }, slotId: { type: 'string' } }, required: ['svcId', 'slotId'] } } },
+  { type: 'function', function: { name: 'assign_volunteer', description: 'Admin-only: assign a named volunteer to a specific open slot in a service.', parameters: { type: 'object', properties: { svcId: { type: 'string' }, slotId: { type: 'string' }, volunteerName: { type: 'string' }, volunteerEmail: { type: 'string' } }, required: ['svcId', 'slotId', 'volunteerName', 'volunteerEmail'] } } },
+  { type: 'function', function: { name: 'remove_signup', description: 'Remove the current user or an admin-selected volunteer from a specific assigned slot.', parameters: { type: 'object', properties: { svcId: { type: 'string' }, slotId: { type: 'string' } }, required: ['svcId', 'slotId'] } } },
   { type: 'function', function: { name: 'request_coverage', description: 'Request a substitute for a slot the user is already signed up for.', parameters: { type: 'object', properties: { svcId: { type: 'string' }, slotId: { type: 'string' } }, required: ['svcId', 'slotId'] } } },
   { type: 'function', function: { name: 'create_service', description: 'Create a new service and add it to the calendar.', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Unique ID e.g. "svc-20260607"' }, dateISO: { type: 'string', description: 'YYYY-MM-DD' }, date: { type: 'string', description: 'e.g. "Saturday, June 7"' }, time: { type: 'string', description: 'e.g. "9:30 AM"' }, type: { type: 'string', description: 'e.g. "Shabbat Morning"' }, isHH: { type: 'boolean' }, slots: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, role: { type: 'string' }, timeSlot: { type: ['string', 'null'] }, volunteer: { type: ['string', 'null'] }, volunteerEmail: { type: ['string', 'null'] } }, required: ['id', 'role', 'timeSlot', 'volunteer', 'volunteerEmail'] } } }, required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots'] } } },
 ];
@@ -335,6 +339,8 @@ function extractOpenRouterResponse(data) {
     const name = toolCall.function?.name;
     const input = parseToolArguments(toolCall.function?.arguments);
     if (name === 'sign_me_up') actions.push({ action: 'sign_me_up', svcId: String(input.svcId), slotId: input.slotId });
+    else if (name === 'assign_volunteer') actions.push({ action: 'assign_volunteer', svcId: String(input.svcId), slotId: input.slotId, volunteerName: input.volunteerName, volunteerEmail: input.volunteerEmail });
+    else if (name === 'remove_signup') actions.push({ action: 'remove_signup', svcId: String(input.svcId), slotId: input.slotId });
     else if (name === 'request_coverage') actions.push({ action: 'request_coverage', svcId: String(input.svcId), slotId: input.slotId });
     else if (name === 'create_service') actions.push({ action: 'create_service', service: input });
   }
@@ -347,6 +353,12 @@ function actionIntentPermitsTools(message, actionName, history = []) {
   if (actionName === 'sign_me_up') {
     return /\b(sign me up|i want to sign up|please sign me up|put me down|i'?ll take|i can cover|add me)\b/i.test(lower);
   }
+  if (actionName === 'assign_volunteer') {
+    return /\b(add|assign|put|sign up)\b.*\b(for|to|on|friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(lower);
+  }
+  if (actionName === 'remove_signup') {
+    return /\b(remove|unassign|take\s+off|take me off|drop me)\b/i.test(lower);
+  }
   if (actionName === 'request_coverage') {
     return /\b(request coverage|need coverage|find (me )?(a )?substitute|need a sub|replace me)\b/i.test(lower);
   }
@@ -358,11 +370,87 @@ function actionIntentPermitsTools(message, actionName, history = []) {
 
 function filterActionsByRole(actions, role) {
   if (role === 'admin') return actions;
-  if (role === 'volunteer') return actions.filter(action => action.action === 'sign_me_up' || action.action === 'request_coverage');
+  if (role === 'volunteer') return actions.filter(action => action.action === 'sign_me_up' || action.action === 'request_coverage' || action.action === 'remove_signup');
   return [];
 }
 
 function isoDate(date) { return date.toISOString().slice(0, 10); }
+function norm(value) { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function firstName(value) { return norm(value).split(/\s+/)[0] || ''; }
+function serviceMatchesWhen(svc, message) {
+  const lower = message.toLowerCase();
+  const hay = `${svc.date || ''} ${svc.type || ''} ${svc.time || ''}`.toLowerCase();
+  if (/\bfriday\b/.test(lower) && (/friday/.test(hay) || /kabbalat|erev/.test(hay))) return true;
+  if (/\bsaturday\b/.test(lower) && (/saturday/.test(hay) || /morning/.test(hay))) return true;
+  if (/\bshabbat\b/.test(lower) && /shabbat|kabbalat/.test(hay)) return true;
+  return false;
+}
+function bestSlotForMessage(svc, message, requireOpen = false, user = null) {
+  const slots = Array.isArray(svc?.slots) ? svc.slots : [];
+  const candidates = slots.filter(sl => {
+    if (requireOpen && sl.volunteer) return false;
+    if (user) {
+      const mine = sl.volunteerEmail && user.email && String(sl.volunteerEmail).toLowerCase() === String(user.email).toLowerCase();
+      const nameMine = !sl.volunteerEmail && sl.volunteer && user.name && norm(sl.volunteer) === norm(user.name);
+      if (!mine && !nameMine) return false;
+    }
+    return true;
+  });
+  if (!candidates.length) return null;
+  const lower = message.toLowerCase();
+  if (/usher/.test(lower)) return candidates.find(sl => /usher/i.test(sl.role)) || candidates[0];
+  if (/parking/.test(lower)) return candidates.find(sl => /parking/i.test(sl.role)) || candidates[0];
+  return candidates.find(sl => /greeter/i.test(sl.role)) || candidates[0];
+}
+function volunteerMatches(volunteers, token) {
+  const q = norm(token);
+  if (!q) return [];
+  return (Array.isArray(volunteers) ? volunteers : []).filter(v => {
+    const name = norm(v.name);
+    const email = norm(v.email);
+    return name === q || firstName(name) === q || name.includes(q) || email.includes(q);
+  });
+}
+function extractRequestedVolunteerName(message) {
+  const match = message.match(/\b(?:add|assign|put|sign up)\s+([a-z][a-z.'-]*)\b/i);
+  const name = match?.[1];
+  if (!name || /^(me|a|an|the|volunteer|greeter|usher)$/i.test(name)) return '';
+  return name;
+}
+function maybeBuildAdminAssignmentAction(message, role, services, volunteers = []) {
+  if (role !== 'admin') return null;
+  if (!/\b(add|assign|put|sign up)\b/i.test(message) || !/\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(message)) return null;
+  const requestedName = extractRequestedVolunteerName(message);
+  if (!requestedName) return null;
+  const matches = volunteerMatches(volunteers, requestedName).filter(v => v?.active !== false);
+  if (matches.length > 1) {
+    return { text: `Which ${requestedName} did you mean? ${matches.map(v => `${v.name} <${v.email}>`).join('; ')}`, actions: [] };
+  }
+  if (matches.length === 0) {
+    return { text: `I couldn't find a volunteer matching “${requestedName}.” Please use a full name or email.`, actions: [] };
+  }
+  const svc = services.find(s => serviceMatchesWhen(s, message));
+  if (!svc) return { text: `I couldn't find a matching service for that request. Which service should I use?`, actions: [] };
+  const slot = bestSlotForMessage(svc, message, true);
+  if (!slot) return { text: `${svc.type} on ${svc.date} does not have an open matching slot.`, actions: [] };
+  const vol = matches[0];
+  return {
+    text: `Adding ${vol.name} to ${svc.type} on ${svc.date}.`,
+    actions: [{ action: 'assign_volunteer', svcId: String(svc.id), slotId: slot.id, volunteerName: vol.name, volunteerEmail: vol.email }],
+  };
+}
+function maybeBuildRemoveSignupAction(message, role, services, user) {
+  if (role === 'guest' || !user) return null;
+  if (!/\b(remove|unassign|take\s+off|take me off|drop me)\b/i.test(message)) return null;
+  const svc = services.find(s => serviceMatchesWhen(s, message));
+  if (!svc) return { text: `I couldn't find the matching service to remove you from. Which date/service did you mean?`, actions: [] };
+  const slot = bestSlotForMessage(svc, message, false, user);
+  if (!slot) return { text: `I don't see you assigned to ${svc.type} on ${svc.date}.`, actions: [] };
+  return {
+    text: `Removing you from ${svc.type} on ${svc.date}.`,
+    actions: [{ action: 'remove_signup', svcId: String(svc.id), slotId: slot.id }],
+  };
+}
 function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
 function dateLabel(date) {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
@@ -468,6 +556,25 @@ export default async function handler(req) {
   const role = userRole;
   const rawServices = Array.isArray(body.services) ? body.services : [];
   const services = redactServicesForRole(rawServices, sessionUser, role);
+  const deterministicAssignment = maybeBuildAdminAssignmentAction(sanitized.message, role, services, body?.volunteers || []);
+  const deterministicRemoval = maybeBuildRemoveSignupAction(sanitized.message, role, services, sessionUser);
+  const simpleDeterministic = deterministicAssignment || deterministicRemoval;
+  if (simpleDeterministic) {
+    simpleDeterministic.actions = filterActionsByRole(simpleDeterministic.actions, role);
+    await logAiInteraction({
+      status: 'ok',
+      latencyMs: Date.now() - startedAt,
+      prompt: sanitized.message,
+      userRole,
+      userEmail,
+      model: 'deterministic-action-builder',
+      responseText: simpleDeterministic.text,
+      actionCount: simpleDeterministic.actions.length,
+      actionTypes: simpleDeterministic.actions.map(action => action.action),
+      metadata: { serviceCount: services.length, scopeReason: scope.reason, deterministic: true },
+    });
+    return jsonResponse(simpleDeterministic);
+  }
   const deterministic = maybeBuildPatternActions(sanitized.message, role, services, history);
   if (deterministic) {
     deterministic.actions = filterActionsByRole(deterministic.actions, role);

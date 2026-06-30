@@ -265,6 +265,7 @@ export default function App() {
         {view === 'ai' && (
           <AIView user={user} services={services}
                   onAIVolunteerSignup={onAIVolunteerSignup}
+                  onAIRemoveSignup={onSelfRemove}
                   onAIRequestCoverage={onRequestCoverage}
                   onAICreateService={onAICreateService} />
         )}
