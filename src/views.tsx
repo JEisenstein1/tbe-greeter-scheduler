@@ -99,7 +99,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRequestCoverag
           services: services.map(s => ({
             id: s.id, dateISO: s.dateISO, date: s.date, time: s.time,
             type: s.type, isHH: s.isHH,
-            slots: s.slots.map(sl => ({ id: sl.id, role: sl.role, timeSlot: sl.timeSlot, volunteer: sl.volunteer })),
+            slots: s.slots.map(sl => ({ id: sl.id, role: sl.role, timeSlot: sl.timeSlot, volunteer: sl.volunteer, volunteerEmail: sl.volunteerEmail, coverageRequested: sl.coverageRequested })),
           })),
         }),
         signal: abortRef.current.signal,

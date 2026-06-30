@@ -1,16 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
 // @ts-expect-error api/chat.js is the Vercel Edge runtime module, intentionally plain JS.
 import handler, { classifyMessageScope, sanitizeUserMessage } from '../../api/chat.js';
 
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalModel = process.env.OPENROUTER_MODEL;
+const originalSessionSecret = process.env.SESSION_SECRET;
+const originalAdminEmails = process.env.ADMIN_EMAILS;
 
 function request(message: string, role: 'admin' | 'volunteer' = 'volunteer', extra: Record<string, unknown> = {}) {
   return new Request('http://localhost/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, role, user: { name: 'Test Volunteer', email: 'test@example.com' }, services: [], ...extra }),
+    headers: { 'Content-Type': 'application/json', ...(extra.headers as Record<string, string> || {}) },
+    body: JSON.stringify({ message, role, user: { name: 'Test Volunteer', email: 'test@example.com' }, services: [], ...Object.fromEntries(Object.entries(extra).filter(([k]) => k !== 'headers')) }),
   });
+}
+
+function signedSessionCookie(user: { name: string; email: string; role: string; source: string }) {
+  process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session-secret';
+  const payload = Buffer.from(JSON.stringify({ user, iat: Date.now() }), 'utf8').toString('base64url');
+  const sig = crypto.createHmac('sha256', process.env.SESSION_SECRET).update(payload).digest('base64url');
+  return `tbe_session=${encodeURIComponent(`${payload}.${sig}`)}`;
+}
+
+function adminHeaders() {
+  process.env.ADMIN_EMAILS = 'admin@example.com';
+  return { Cookie: signedSessionCookie({ name: 'Admin User', email: 'admin@example.com', role: 'admin', source: 'google' }) };
 }
 
 describe('chat handler guard behavior', () => {
@@ -18,6 +33,10 @@ describe('chat handler guard behavior', () => {
     process.env.OPENROUTER_API_KEY = originalKey;
     if (originalModel === undefined) delete process.env.OPENROUTER_MODEL;
     else process.env.OPENROUTER_MODEL = originalModel;
+    if (originalSessionSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = originalSessionSecret;
+    if (originalAdminEmails === undefined) delete process.env.ADMIN_EMAILS;
+    else process.env.ADMIN_EMAILS = originalAdminEmails;
     vi.restoreAllMocks();
   });
 
@@ -94,7 +113,7 @@ describe('chat handler guard behavior', () => {
       { role: 'user', content: 'Create Friday evening services for the rest of the year?' },
       { role: 'assistant', content: 'Please confirm: should I create the missing Friday evening services?' },
     ];
-    const res = await handler(request('Yes, confirmed', 'admin', { history }));
+    const res = await handler(request('Yes, confirmed', 'admin', { history, headers: adminHeaders() }));
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -102,6 +121,23 @@ describe('chat handler guard behavior', () => {
     expect(body.actions[0]).toMatchObject({ action: 'create_service' });
     const payload = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
     expect(payload.messages.map((m: { role: string }) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+  });
+
+  it('blocks signed-out users from roster and assignment lookups even if client sends names', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const services = [{
+      id: 'svc-1', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: 'Private Person', volunteerEmail: 'private@example.com' }],
+    }];
+
+    const res = await handler(request('Who is signed up to greet this Friday?', 'admin', { services }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actions).toEqual([]);
+    expect(body.text).toContain('can’t share roster');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('previews recurring Friday/Saturday bulk creation before returning create actions', async () => {
@@ -112,7 +148,7 @@ describe('chat handler guard behavior', () => {
       { id: 'sat-template', dateISO: '2026-06-27', date: 'Saturday, June 27', time: '10:00 AM', type: 'Shabbat Morning', isHH: false, slots: [{ id: 's1', role: 'Greeter', timeSlot: null, volunteer: null }] },
     ];
 
-    const preview = await handler(request('Continue the Friday night and Saturday morning service pattern through the end of the year', 'admin', { services }));
+    const preview = await handler(request('Continue the Friday night and Saturday morning service pattern through the end of the year', 'admin', { services, headers: adminHeaders() }));
     const previewBody = await preview.json();
 
     expect(preview.status).toBe(200);
@@ -122,6 +158,7 @@ describe('chat handler guard behavior', () => {
 
     const confirmed = await handler(request('confirm', 'admin', {
       services,
+      headers: adminHeaders(),
       history: [
         { role: 'user', content: 'Continue the Friday night and Saturday morning service pattern through the end of the year' },
         { role: 'assistant', content: previewBody.text },
