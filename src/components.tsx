@@ -330,7 +330,7 @@ export function AssignModal({ svc, slot, onClose, onConfirm }: AssignModalProps)
                 <div className="val">You're scheduled — {svc.type}, {svc.date.split(',')[1].trim()}</div>
               </div>
               <div className="body">
-                {`Shalom ${vol.name.split(' ')[0]},\n\nYou've been scheduled as `}<strong>{slot.role}</strong>{` for `}<strong>{svc.type}</strong>{` on `}<strong>{svc.date}</strong>{` at `}<strong>{svc.time}</strong>{`${slot.timeSlot ? ` (${slot.timeSlot})` : ''}.\n\nA Google Calendar invite is on its way. Thank you for helping us welcome the community.\n\n— Temple Beth El`}
+                {`Shalom ${vol.name.split(' ')[0]},\n\nYou've been scheduled as `}<strong>{slot.role}</strong>{` for `}<strong>{svc.type}</strong>{` on `}<strong>{svc.date}</strong>{` at `}<strong>{svc.time}</strong>{`${slot.timeSlot ? ` (${slot.timeSlot})` : ''}.\n\nA calendar invite will be attached to the confirmation email. Thank you for helping us welcome the community.\n\n— Temple Beth El`}
               </div>
             </div>
           )}
@@ -390,7 +390,7 @@ export function SignUpModal({ svc, slot, name, email, onClose, onConfirm }: Sign
               <div className="val">Thank you for signing up — {svc.type}</div>
             </div>
             <div className="body">
-              {`Shalom ${name.split(' ')[0] || 'friend'},\n\nThank you for signing up to serve as `}<strong>{slot.role}</strong>{` at `}<strong>{svc.type}</strong>{`.\n\n`}<strong>{svc.date}</strong>{` · `}<strong>{svc.time}</strong>{`${slot.timeSlot ? '\n' + slot.timeSlot : ''}\n\nA Google Calendar invite is on its way. If anything changes, please reply to this message.\n\n— Temple Beth El`}
+              {`Shalom ${name.split(' ')[0] || 'friend'},\n\nThank you for signing up to serve as `}<strong>{slot.role}</strong>{` at `}<strong>{svc.type}</strong>{`.\n\n`}<strong>{svc.date}</strong>{` · `}<strong>{svc.time}</strong>{`${slot.timeSlot ? '\n' + slot.timeSlot : ''}\n\nA calendar invite will be attached to the confirmation email. If anything changes, please reply to this message.\n\n— Temple Beth El`}
             </div>
           </div>
         </div>

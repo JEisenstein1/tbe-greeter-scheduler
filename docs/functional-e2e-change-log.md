@@ -20,6 +20,14 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - App code changed: none.
 - Rollback: revert the script change to restore prior assertion; no production code rollback needed.
 
+## 2026-06-30 — Calendar invite attachment fix
+
+- Pre-fix snapshot: `pre-fix-calendar-invite-20260630T102205Z`
+- Finding: UI/email preview promised a calendar invite, but production Gmail sender generated plain-text-only messages.
+- Change: `api/services/signup.js` now builds an iCalendar `METHOD:REQUEST` `.ics` invite and attaches it to Gmail raw MIME and Resend payloads. Signup email copy now says a calendar invite is attached.
+- Tests: added `src/__tests__/calendar-invite-email.test.ts`; updated preview copy expectation.
+- Rollback: reset to `pre-fix-calendar-invite-20260630T102205Z` or revert the calendar-invite commit.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.

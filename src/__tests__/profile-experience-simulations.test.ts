@@ -128,7 +128,7 @@ describe('profile experience simulations', () => {
     });
     expect(email.text).toContain('Shalom Emma');
     expect(email.text).toContain('Saturday, June 6');
-    expect(email.text).toContain('A calendar invite will follow');
+    expect(email.text).toContain('A calendar invite will be attached');
   });
 
   it('mock roster auth tells the product the user is recognized but not actually OAuth-verified', () => {

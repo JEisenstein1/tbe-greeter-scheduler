@@ -63,7 +63,7 @@ export function buildConfirmationEmail(svc: Service, slot: Slot, vol: { name: st
   return {
     to: vol.email.trim(),
     subject: `Thank you for signing up — ${svc.type}`,
-    text: `Shalom ${first},\n\nThank you for signing up to serve as ${slot.role} at ${svc.type}.\n\n${svc.date} · ${svc.time}${timeSlotLine}\n\nA calendar invite will follow from Temple Beth El once email/calendar integration is connected.\n\n— Temple Beth El`,
+    text: `Shalom ${first},\n\nThank you for signing up to serve as ${slot.role} at ${svc.type}.\n\n${svc.date} · ${svc.time}${timeSlotLine}\n\nA calendar invite will be attached to the confirmation email.\n\n— Temple Beth El`,
   };
 }
 
