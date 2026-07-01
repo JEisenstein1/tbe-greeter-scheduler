@@ -14,6 +14,11 @@ const ALLOWED_PATTERNS = [
   /\b(greeters?|ushers?|parking attendants?|volunteers?|services?|shabbat|havdalah|rosh hashanah|yom kippur|high holidays?)\b/i,
   /\b(sign\s?up|signed\s+up|signup|schedule|scheduled|scheduling|availability|available|slot|coverage|substitute|reminder|calendar|admin|shift|dates?|assignments?|commitments?)\b/i,
   /\b(can'?t make|cannot make|unable to make|can'?t attend|cannot attend|need a sub|cover for me|cancel my|cancelled?|drop me)\b/i,
+  // Natural scheduling language that users/admins use without saying "schedule".
+  /\b(can|could|would|will|is|are)\b.*\b(help|do|cover|take|handle|be there|make it|available)\b.*\b(friday|saturday|shabbat|service|slot|night|morning|weekend|next week)\b/i,
+  /\b(who|anyone|somebody|someone)\b.*\b(can|could|available|cover|help|do|take|handle)\b.*\b(friday|saturday|shabbat|service|slot|night|morning|weekend)\b/i,
+  /\b(i|we)\b.*\b(conflict|problem|issue|stuck|can'?t|cannot|unable)\b/i,
+  /\b(do i|am i|should i|need to)\b.*\b(be there|show up|come|serve|help|signed up|on)\b/i,
   /\b(what|show|list|when|am)\b.*\b(my|i)\b.*\b(dates?|services?|schedule|assignments?|signed\s+up)\b/i,
   /\b(add|assign|schedule|put|remove|unassign|take\s+off)\b.*\b(me|volunteer|greeter|usher|friday|saturday|shabbat|service|slot|roster)\b/i,
   /\b(add|assign|schedule|put)\b\s+\w+\s+\b(for|to|on)\b\s+\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i,
@@ -21,6 +26,8 @@ const ALLOWED_PATTERNS = [
   /\b(sign me up|put me down|i'?ll take|i can cover|add me|count me in)\b/i,
   // Bare "add <name>" / "remove <name>" scheduling intent (roster ops resolved deterministically by role).
   /\b(add|assign|schedule|put|sign\s?up|remove|unassign|take\s+off|drop)\s+[a-z][a-z.'-]+\b/i,
+  // Guest/volunteer phrasing for taking an open slot.
+  /\b(can i|could i|may i|i can|i'?d like to|happy to|able to)\b.*\b(help|cover|take|do|serve)\b/i,
 ];
 
 const DISALLOWED_PATTERNS = [
@@ -397,6 +404,7 @@ function serviceMatchesWhen(svc, message) {
   const lower = message.toLowerCase();
   const hay = `${svc.date || ''} ${svc.type || ''} ${svc.time || ''}`.toLowerCase();
   if (/\bfriday\b/.test(lower) && (/friday/.test(hay) || /kabbalat|erev/.test(hay))) return true;
+  if (/\bfriday night\b|\bnight\b/.test(lower) && /friday|kabbalat|erev|6:30|5:45|6:15/.test(hay)) return true;
   if (/\bsaturday\b/.test(lower) && (/saturday/.test(hay) || /morning/.test(hay))) return true;
   if (/\bshabbat\b/.test(lower) && /shabbat|kabbalat/.test(hay)) return true;
   return false;
@@ -406,7 +414,7 @@ function pickServiceForMessage(services, message) {
     .filter(s => serviceMatchesWhen(s, message))
     .sort((a, b) => String(a.dateISO || '').localeCompare(String(b.dateISO || '')));
   if (!matches.length) return null;
-  if (/\bnext\b/i.test(message) && matches.length > 1) return matches[1];
+  if (/\bnext(\s+week)?\b/i.test(message) && matches.length > 1) return matches[1];
   if (/\bthis\b/i.test(message)) return matches[0];
   return matches[0];
 }
@@ -440,8 +448,11 @@ function extractRequestedVolunteerName(message) {
   const lookup = message.match(/\b(?:look up|find)\s+([a-z][a-z.'-]*)\b/i);
   if (lookup?.[1] && !/^(me|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(lookup[1])) return lookup[1];
   const match = message.match(/\b(?:add|assign|schedule|put|sign up)\s+([a-z][a-z.'-]*)\b/i);
-  const name = match?.[1];
-  if (!name || /^(me|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(name)) return '';
+  const natural = message.match(/\b(?:can|could|would|will|is)\s+([A-Z][a-z.'-]+)\b.*\b(?:do|cover|take|handle|help|available|make it)\b/i)
+    || message.match(/\b([A-Z][a-z.'-]+)\b.*\b(?:do|cover|take|handle|help|available|make it)\b/i)
+    || message.match(/\b(?:what about|how about)\s+([A-Z][a-z.'-]+)\b/i);
+  const name = match?.[1] || natural?.[1];
+  if (!name || /^(me|i|a|an|the|volunteer|greeter|usher|him|her|them|who|what|how|can|could|would|will|is|this|next|following|friday|saturday|shabbat|week|night|morning)$/i.test(name)) return '';
   return name;
 }
 function extractRemovalVolunteerName(message) {
@@ -453,11 +464,13 @@ function extractRemovalVolunteerName(message) {
 function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [], history = []) {
   if (role !== 'admin') return null;
   const priorText = history.slice(-4).map(h => h.content).join('\n');
-  const assignmentLike = /\b(add|assign|schedule|put|sign up)\b/i.test(message) || (/\b(next|this|following|how about|what about|friday|saturday|shabbat)\b/i.test(message) && /\b(add|assign|schedule|put|sign up|look up)\b/i.test(priorText));
+  const naturalAssignment = /\b(can|could|would|will|is|what about|how about)\b.*\b(do|cover|take|handle|help|available|make it)\b/i.test(message)
+    || (/\b(what about|how about)\b/i.test(message) && /\b(fill|assign|schedule|add|greeters?|ushers?|slots?)\b/i.test(priorText));
+  const assignmentLike = /\b(add|assign|schedule|put|sign up)\b/i.test(message) || naturalAssignment || (/\b(next|this|following|how about|what about|friday|saturday|shabbat|week)\b/i.test(message) && /\b(add|assign|schedule|put|sign up|look up|fill|greeters?|ushers?|slots?)\b/i.test(priorText));
   if (!assignmentLike) return null;
   const requestedName = extractRequestedVolunteerName(message) || extractRequestedVolunteerName(priorText);
   if (!requestedName) return null;
-  const hasServiceContext = /\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(`${message}\n${priorText}`);
+  const hasServiceContext = /\b(friday|saturday|shabbat|service|slot|greeter|usher|night|morning|week)\b/i.test(`${message}\n${priorText}`);
   const matches = volunteerMatches(volunteers, requestedName).filter(v => v?.active !== false);
   if (matches.length > 1) {
     return { text: `Which ${requestedName} did you mean? ${matches.map(v => `${v.name} <${v.email}>`).join('; ')}`, actions: [] };
@@ -467,7 +480,7 @@ function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [
     // to other handlers or the model rather than falsely reporting an unknown volunteer.
     return hasServiceContext ? { text: `I couldn't find a volunteer matching “${requestedName}.” Please use a full name or email.`, actions: [] } : null;
   }
-  const svc = pickServiceForMessage(services, message);
+  const svc = pickServiceForMessage(services, `${message}\n${priorText}`);
   if (!svc) return { text: `Which service should I add ${matches[0].name} to?`, actions: [] };
   const slot = bestSlotForMessage(svc, message, true);
   if (!slot) return { text: `${svc.type} on ${svc.date} does not have an open matching slot.`, actions: [] };
@@ -525,7 +538,9 @@ function maybeBuildMyAssignmentsResponse(message, role, services, user) {
   if (role === 'guest' || !user) return null;
   // Require a genuine self-reference ("my", "am I", "I'm"). Bare "me"/"i" swallowed roster
   // questions like "show me the roster" and mistook them for personal-schedule lookups.
-  if (!/\b(my|mine|am i|i am|i'?m)\b/i.test(message) || !/\b(signed\s*up|sign\s*up|services?|dates?|assignments?|weekend|schedule)\b/i.test(message)) return null;
+  const selfStatus = /\b(my|mine|am i|i am|i'?m)\b/i.test(message) && /\b(signed\s*up|sign\s*up|services?|dates?|assignments?|weekend|schedule)\b/i.test(message);
+  const naturalAttendance = /\b(do i|should i|need to|am i supposed to)\b.*\b(be there|show up|come|serve|help|on)\b/i.test(message);
+  if (!selfStatus && !naturalAttendance) return null;
   const mine = userAssignedSlots(services, user).sort((a, b) => String(a.svc.dateISO).localeCompare(String(b.svc.dateISO)));
   if (!mine.length) return { text: `${user.name || 'You'}, you are not currently signed up for any visible services.`, actions: [] };
   const lines = mine.map(({ svc, slot }) => `- ${svc.date} at ${svc.time} — ${svc.type}: ${slot.role}${slot.timeSlot ? ` (${slot.timeSlot})` : ''}`);
@@ -538,7 +553,7 @@ function maybeBuildMyAssignmentsResponse(message, role, services, user) {
 }
 function maybeBuildCoverageRequestAction(message, role, services, user) {
   if (role !== 'volunteer' || !user) return null;
-  if (!/\b(request coverage|need coverage|find (me )?(a )?substitute|need a sub|replace me|cover for me|can'?t make|cannot make|unable to make|can'?t attend|cannot attend)\b/i.test(message)) return null;
+  if (!/\b(request coverage|need coverage|find (me )?(a )?substitute|need a sub|replace me|cover for me|can'?t make|cannot make|unable to make|can'?t attend|cannot attend|conflict|problem|issue|stuck)\b/i.test(message)) return null;
   const assigned = userAssignedSlots(services, user).sort((a, b) => String(a.svc.dateISO).localeCompare(String(b.svc.dateISO)));
   if (!assigned.length) return { text: `I don't see an upcoming assignment for you to request coverage for.`, actions: [] };
   const svc = pickServiceForMessage(assigned.map(({ svc }) => svc), message) || assigned[0].svc;
@@ -548,6 +563,15 @@ function maybeBuildCoverageRequestAction(message, role, services, user) {
     text: `I’m requesting coverage for your ${slot.role} assignment at ${svc.type} on ${svc.date}.`,
     actions: [{ action: 'request_coverage', svcId: String(svc.id), slotId: slot.id }],
   };
+}
+
+function maybeBuildGuestSignupGuidance(message, role, services) {
+  if (role !== 'guest') return null;
+  if (!/\b(can i|could i|may i|i can|i'?d like to|happy to|able to)\b.*\b(help|cover|take|do|serve)\b/i.test(message)) return null;
+  const svc = pickServiceForMessage(services, message);
+  const slot = svc ? bestSlotForMessage(svc, message, true) : null;
+  const slotText = svc && slot ? ` There is an open ${slot.role} slot for ${svc.type} on ${svc.date}.` : '';
+  return { text: `${slotText} Please sign in or use the Sign Up form so I can put you in the right slot.`, actions: [] };
 }
 function addDays(date, days) { const d = new Date(date); d.setUTCDate(d.getUTCDate() + days); return d; }
 function dateLabel(date) {
@@ -657,8 +681,9 @@ export default async function handler(req) {
   const deterministicAssignment = maybeBuildAdminAssignmentAction(sanitized.message, role, services, body?.volunteers || [], history);
   const deterministicRemoval = maybeBuildRemoveSignupAction(sanitized.message, role, services, sessionUser, body?.volunteers || []);
   const deterministicCoverage = maybeBuildCoverageRequestAction(sanitized.message, role, services, sessionUser);
+  const deterministicGuestSignup = maybeBuildGuestSignupGuidance(sanitized.message, role, services);
   const deterministicMyAssignments = maybeBuildMyAssignmentsResponse(sanitized.message, role, services, sessionUser);
-  const simpleDeterministic = deterministicAssignment || deterministicRemoval || deterministicCoverage || deterministicMyAssignments;
+  const simpleDeterministic = deterministicAssignment || deterministicRemoval || deterministicCoverage || deterministicGuestSignup || deterministicMyAssignments;
   if (simpleDeterministic) {
     simpleDeterministic.actions = filterActionsByRole(simpleDeterministic.actions, role);
     await logAiInteraction({

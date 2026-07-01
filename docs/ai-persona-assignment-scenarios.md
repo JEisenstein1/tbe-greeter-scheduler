@@ -18,6 +18,8 @@ Admins may use many terms for the same operation. The assistant should map these
 |---|---|---|
 | Assign a volunteer to a date | “add Debbie”, “assign Debbie”, “schedule Debbie”, “put Debbie down”, “sign Debbie up” | `assign_volunteer` with matched volunteer, target service, open slot |
 | Assign by relative date | “this Friday”, “next Friday”, “Saturday morning”, “Shabbat” | Choose matching service; “next” means the next matching service after “this” when multiple exist |
+| Natural assignment phrasing | “Can Debbie do next Friday?”, “What about Debbie next week?” | Treat as assignment intent when admin + volunteer + service context are unambiguous |
+| Coverage/availability exploration | “Who can cover Friday night?” | Scheduling-related; reach model for conversational help, no action unless a specific assignment is requested |
 | Ambiguous volunteer | “add Debbie” when multiple Debbies exist | Ask which Debbie; no action |
 | Missing service | “add Debbie” without a date/service | Ask which service; no action |
 | Full service | “add Debbie this Friday” when matching slots are full | Explain no matching open slot; no action |
@@ -29,8 +31,10 @@ Admins may use many terms for the same operation. The assistant should map these
 | Volunteer scenario | Example terms | Expected outcome |
 |---|---|---|
 | Show own schedule | “my dates”, “what’s my next service?”, “am I signed up for a weekend?” | Answer using signed session identity only; no actions |
+| Natural attendance question | “Do I need to be there this weekend?”, “Should I show up Saturday?” | Answer own assignment status deterministically |
 | Sign self up | “sign me up”, “put me down”, “I’ll take Friday”, “I can cover Saturday” | `sign_me_up` only for current signed-in volunteer |
 | Request coverage | “I can’t make my next service”, “need a sub”, “cover for me”, “find me a substitute” | `request_coverage` for their own next/matching assignment |
+| Implicit conflict | “I have a conflict”, “something came up” | Treat as a coverage request for their next/matching assignment when they have one |
 | Remove self | “cancel my signup”, “remove me”, “take me off Saturday”, “drop me” | `remove_signup` only for their own assignment |
 | Ask roster names | “who is greeting Friday?” | May answer names from visible service slots; no email/phone/contact info |
 | Ask contact info | “what’s Debbie’s email?” | Refuse private/contact data; no actions |
@@ -41,6 +45,7 @@ Admins may use many terms for the same operation. The assistant should map these
 |---|---|---|
 | Ask for openings | “what’s open this Friday?”, “any greeter slots?” | Can discuss open slots only; no assigned names; no actions |
 | Try to sign up via chat | “sign me up for next Friday” | Explain they must sign in or use the Sign Up form; no actions |
+| Natural help phrasing | “Can I help Friday night?”, “I can cover Saturday” | Explain open opportunity if known and direct to sign in/Sign Up; no actions |
 | Ask roster/contact info | “who is assigned?”, “what’s Debbie’s email?” | Refuse roster/contact data; no actions |
 | Try admin action | “assign Debbie”, “remove Emma”, “create a service” | Refuse or redirect to sign-in/admin; no actions |
 
@@ -55,6 +60,7 @@ Admins may use many terms for the same operation. The assistant should map these
 - Admin clarification/negative cases: missing service, ambiguous volunteer, full service, named removal missing service, named volunteer not assigned, and admin roster/contact model path.
 - Volunteer guardrails: cannot assign/remove others, cannot create services, contact-info refusal, and session identity wins over spoofed client user data.
 - Frontend action execution: pure reducer tests for `assign_volunteer`, `sign_me_up`, `remove_signup`, `request_coverage`, unknown/no-op actions, logged-out self-signup no-op, and spoofed user data handling.
+- Natural-language jank cases: admin “Can Debbie do next Friday?”, follow-up “What about Debbie next week?”, admin “Who can cover Friday night?”, volunteer “Do I need to be there this weekend?”, volunteer “I have a conflict”, and guest “Can I help Friday night?”.
 
 ## Testbed rule
 

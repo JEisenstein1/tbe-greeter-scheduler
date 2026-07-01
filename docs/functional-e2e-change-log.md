@@ -72,6 +72,14 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Verification: `npm test` → 17 files / 130 tests passing; `npm run build` → TypeScript + Vite production build passing; local browser guest chat privacy check returned the expected no-action refusal.
 - Rollback: revert `api/chat.js`, `server/index.ts`, `src/App.tsx`, `src/views.tsx`, `src/appLogic.ts`, `src/__tests__/ai-persona-assignment-scenarios.test.ts`, `src/__tests__/ai-persona-remediation.test.ts`, `src/__tests__/ai-frontend-action-execution.test.ts`, `docs/ai-persona-assignment-scenarios.md`, and related test/doc updates.
 
+## 2026-07-01 — AI natural-language scheduling jank refinement
+
+- Finding: the persona testbed still over-indexed on explicit terms like “schedule”, “sign up”, and “service”. Simple domain-valid requests such as “Can Debbie do next Friday?”, “Who can cover Friday night?”, “Do I need to be there this weekend?”, “I have a conflict”, and “Can I help Friday night?” were blocked as off-topic or sent down the wrong path.
+- Change: added `src/__tests__/ai-natural-language-jank-regression.test.ts` covering admin natural assignment phrasing, assignment follow-ups, admin coverage/availability exploration, volunteer attendance questions, implicit conflict/coverage requests, and guest help/signup guidance.
+- Fixes: broadened the scope gate for natural scheduling language without allowing unrelated topics; added natural volunteer-name extraction for “Can Debbie do…”; preserved date-only follow-up inheritance; added Friday-night/next-week service matching; added deterministic volunteer attendance/coverage handling; added guest signup guidance for “Can I help…” style prompts.
+- Verification: new targeted suite → 6/6 passing; `chat-handler-behavior` + natural jank targeted run → 24/24 passing; full `npm test` → 18 files / 136 tests passing; `npm run build` → TypeScript + Vite production build passing.
+- Rollback: revert `api/chat.js`, `src/__tests__/ai-natural-language-jank-regression.test.ts`, `docs/ai-persona-assignment-scenarios.md`, and this changelog section.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.
