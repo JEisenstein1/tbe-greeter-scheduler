@@ -61,6 +61,17 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Tests: extended `src/__tests__/chat-handler-behavior.test.ts` with real-log regressions for `schedule Debbie for next friday` and `How about next Friday`.
 - Rollback: reset to `pre-debug-ai-followup-20260630T155822Z` or revert the roster/follow-up continuity commit.
 
+## 2026-07-01 — AI persona assignment scenario testbed
+
+- Pre-fix baseline: existing HEAD `c03b45e` plus working tree changes in this session.
+- Finding: admin/volunteer/logged-out phrasing needed an explicit scenario matrix; local `npm run dev` browser testing proxied `/api/chat` to a stale Express implementation instead of the canonical Vercel chat handler.
+- Change: added `docs/ai-persona-assignment-scenarios.md`, `src/__tests__/ai-persona-assignment-scenarios.test.ts`, `src/__tests__/ai-persona-remediation.test.ts`, and `src/__tests__/ai-frontend-action-execution.test.ts` covering admin assignment synonyms/negative cases, admin named removal, volunteer coverage/cancellation language, volunteer/guest permission boundaries, LLM role filtering, and frontend action execution.
+- Fixes: broadened scheduling scope for “can’t make / need a sub / cancel my signup” language; added deterministic volunteer coverage handling; made admin named removal target the named volunteer, not the admin; added missing-service/full-service/ambiguous-volunteer clarification behavior; tightened “my schedule” matching so roster requests are not swallowed by personal-schedule logic; reordered deterministic action handlers so action intents win over informational responses.
+- Frontend path: extracted pure AI action planning/slot mutation helpers in `src/appLogic.ts` and wired `AIView`/`App.tsx` through them, so frontend execution uses the same behavior covered by tests for `assign_volunteer`, `sign_me_up`, `remove_signup`, `request_coverage`, no-op/unknown actions, and spoofed user data.
+- Local browser parity: simplified `server/index.ts` so Vite’s local `/api/chat` proxy delegates to `api/chat.js`, eliminating drift between deterministic and LLM paths.
+- Verification: `npm test` → 17 files / 130 tests passing; `npm run build` → TypeScript + Vite production build passing; local browser guest chat privacy check returned the expected no-action refusal.
+- Rollback: revert `api/chat.js`, `server/index.ts`, `src/App.tsx`, `src/views.tsx`, `src/appLogic.ts`, `src/__tests__/ai-persona-assignment-scenarios.test.ts`, `src/__tests__/ai-persona-remediation.test.ts`, `src/__tests__/ai-frontend-action-execution.test.ts`, `docs/ai-persona-assignment-scenarios.md`, and related test/doc updates.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.

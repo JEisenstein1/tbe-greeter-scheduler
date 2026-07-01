@@ -7,20 +7,19 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const claudeMd = readFileSync('CLAUDE.md', 'utf8');
 
 describe('AI routing contract', () => {
-  it('uses configurable OPENROUTER_MODEL in both Edge and local server', () => {
+  it('uses configurable OPENROUTER_MODEL in the canonical chat handler and delegates local server to it', () => {
     expect(api).toContain("process.env.OPENROUTER_MODEL || 'openai/gpt-5.5'");
-    expect(server).toContain("process.env.OPENROUTER_MODEL || 'openai/gpt-5.5'");
+    expect(server).toContain("import chatHandler from '../api/chat.js'");
   });
 
-  it('keeps create_service schema flat in both Edge and local server', () => {
+  it('keeps create_service schema flat in the canonical chat handler used by local and Edge paths', () => {
     expect(api).toContain("required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots']");
-    expect(server).toContain("required: ['id', 'dateISO', 'date', 'time', 'type', 'isHH', 'slots']");
     expect(server).not.toContain("required: ['service']");
-    expect(server).toContain("actions.push({ action: 'create_service', service: input })");
+    expect(api).toContain("actions.push({ action: 'create_service', service: input })");
   });
 
   it('returns JSON from local server instead of SSE', () => {
-    expect(server).toContain('res.json(result);');
+    expect(server).toContain('res.send(text);');
     expect(server).not.toContain('text/event-stream');
     expect(server).not.toContain('res.write(`data:');
   });
@@ -34,7 +33,7 @@ describe('AI routing contract', () => {
   });
 
   it('documents local/Edge parity and OpenRouter model override', () => {
-    expect(claudeMd).toContain('Mirrors `api/chat.js` protocol/schema/model configuration');
+    expect(claudeMd).toContain('delegates to the canonical `api/chat.js` handler');
     expect(claudeMd).toContain('OPENROUTER_MODEL');
   });
 });

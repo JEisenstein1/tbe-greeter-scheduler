@@ -67,6 +67,83 @@ export function buildConfirmationEmail(svc: Service, slot: Slot, vol: { name: st
   };
 }
 
+export function applyAssignVolunteer(services: Service[], svcId: Service['id'], slotId: string, vol: { name: string; email: string }): Service[] {
+  return services.map(s => s.id !== svcId ? s : ({
+    ...s,
+    slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
+  }));
+}
+
+export function applyRemoveSignup(services: Service[], svcId: Service['id'], slotId: string): Service[] {
+  return services.map(s => s.id !== svcId ? s : ({
+    ...s,
+    slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: null, volunteerEmail: null, coverageRequested: false })),
+  }));
+}
+
+export function applyRequestCoverage(services: Service[], svcId: Service['id'], slotId: string): Service[] {
+  return services.map(s => s.id !== svcId ? s : ({
+    ...s,
+    slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, coverageRequested: true })),
+  }));
+}
+
+export interface AiAction {
+  action: string;
+  svcId?: string | number;
+  slotId?: string;
+  volunteerName?: string;
+  volunteerEmail?: string;
+  service?: Service;
+}
+
+export type AiActionPlan =
+  | { kind: 'signup'; svcId: Service['id']; slotId: string; vol: { name: string; email: string } }
+  | { kind: 'remove'; svcId: Service['id']; slotId: string }
+  | { kind: 'coverage'; svcId: Service['id']; slotId: string }
+  | { kind: 'create'; service: Service };
+
+// Pure dispatch mirroring AIView's action loop. Returns the mutation a frontend
+// action should trigger, or null for a no-op (unknown action, missing fields, or a
+// self-signup with no signed-in user). Keeping this pure lets App/AIView and tests
+// share one source of truth for which slots an AI action is allowed to touch.
+export function planAiAction(act: AiAction, user: User | null): AiActionPlan | null {
+  if (act.action === 'sign_me_up' && act.svcId && act.slotId) {
+    if (!user) return null;
+    return { kind: 'signup', svcId: act.svcId, slotId: act.slotId, vol: { name: user.name, email: user.email } };
+  }
+  if (act.action === 'assign_volunteer' && act.svcId && act.slotId && act.volunteerName && act.volunteerEmail) {
+    return { kind: 'signup', svcId: act.svcId, slotId: act.slotId, vol: { name: act.volunteerName, email: act.volunteerEmail } };
+  }
+  if (act.action === 'remove_signup' && act.svcId && act.slotId) {
+    return { kind: 'remove', svcId: act.svcId, slotId: act.slotId };
+  }
+  if (act.action === 'request_coverage' && act.svcId && act.slotId) {
+    return { kind: 'coverage', svcId: act.svcId, slotId: act.slotId };
+  }
+  if (act.action === 'create_service' && act.service) {
+    return { kind: 'create', service: act.service };
+  }
+  return null;
+}
+
+// Frontend-equivalent reducer composing planAiAction with the pure slot transforms.
+// Used in tests to prove the frontend action path mutates only expected slots; built
+// entirely from the same primitives production uses, so there is no logic drift.
+export function applyAiActions(services: Service[], actions: AiAction[], user: User | null): Service[] {
+  return (actions ?? []).reduce<Service[]>((acc, act) => {
+    const plan = planAiAction(act, user);
+    if (!plan) return acc;
+    switch (plan.kind) {
+      case 'signup': return applyAssignVolunteer(acc, plan.svcId, plan.slotId, plan.vol);
+      case 'remove': return applyRemoveSignup(acc, plan.svcId, plan.slotId);
+      case 'coverage': return applyRequestCoverage(acc, plan.svcId, plan.slotId);
+      case 'create': return [...acc, plan.service].sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+      default: return acc;
+    }
+  }, services);
+}
+
 export function getCalendarDayPrimaryAction(services: Service[], iso: string, role: UserRole): { type: 'signup' | 'manage' | 'none'; serviceId?: Service['id'] } {
   const dayServices = services.filter(s => s.dateISO === iso);
   if (dayServices.length === 0) return { type: 'none' };

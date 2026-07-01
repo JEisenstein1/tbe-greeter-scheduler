@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Service, User, ViewId, AdminSubId, AssignTarget, SignupTarget, EventEditState, TweakValues } from './types';
 import { INITIAL_SERVICES } from './data';
-import { buildConfirmationEmail, shouldRestorePersistedUser } from './appLogic';
+import { buildConfirmationEmail, shouldRestorePersistedUser, applyAssignVolunteer, applyRemoveSignup, applyRequestCoverage } from './appLogic';
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakSelect, TweakToggle } from './TweaksPanel';
 import { Topbar, BotNav, AssignModal, SignUpModal, ToastRail, AuthSheet, EventEditModal, ConfirmDialog } from './components';
 import {
@@ -215,20 +215,12 @@ export default function App() {
 
   const onRequestCoverage = async (svcId: string | number, slotId: string) => {
     try { await apiJson('/api/services/request-coverage', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
-    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
-      ...s,
-      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, coverageRequested: true })),
-    })));
+    setServices(prev => applyRequestCoverage(prev, svcId, slotId));
     pushToast('Coverage requested — we\'ll find a substitute');
   };
   const onSelfRemove = async (svcId: string | number, slotId: string) => {
     try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
-    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
-      ...s,
-      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({
-        ...sl, volunteer: null, volunteerEmail: null, coverageRequested: false,
-      })),
-    })));
+    setServices(prev => applyRemoveSignup(prev, svcId, slotId));
     pushToast('Commitment removed');
   };
   const onClearCoverage = (svcId: string | number, slotId: string) => {
@@ -241,10 +233,7 @@ export default function App() {
 
   const onAIVolunteerSignup = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
     try { await apiJson('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); } catch { /* allow fixture/demo mode */ }
-    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
-      ...s,
-      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
-    })));
+    setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
     pushToast(`Signed up — confirmation sent to ${vol.email}`);
   };
   const onAICreateService = async (svc: Service) => {

@@ -32,7 +32,7 @@ All state is **in-memory** (resets on refresh). There is no database. The Vercel
 | `src/components.tsx` | Shared components: `Topbar`, `BotNav`, `AuthSheet`, `ServiceCard`, modals. |
 | `src/styles.css` | All CSS. Uses CSS custom properties (`--c-navy`, `--c-gold`, etc.) set by the theme system. |
 | `api/chat.js` | Vercel Edge Function. Sanitizes and domain-gates input, builds system prompt from request context, calls OpenRouter, returns `{ text, actions }` JSON. |
-| `server/index.ts` | Local Express dev server. Mirrors `api/chat.js` protocol/schema/model configuration for local `npm run dev`. |
+| `server/index.ts` | Local Express dev server. During `npm run dev`, Vite proxies `/api/chat` here and the server delegates to the canonical `api/chat.js` handler so frontend tests use production chat logic. |
 
 ---
 

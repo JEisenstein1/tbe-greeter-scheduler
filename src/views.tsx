@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { Service, Slot, User, ChatMessage, SSEEvent } from './types';
 import { VOLUNTEERS, ADMINS, SYNAGOGUE } from './data';
 import { openCount, groupSlotsByTime, fmtDate, abbrev, statusFor } from './helpers';
-import { findUserAssignments, getCalendarDayPrimaryAction } from './appLogic';
+import { findUserAssignments, getCalendarDayPrimaryAction, planAiAction } from './appLogic';
 import { Icon, DateBadge, ServiceCard } from './components';
 
 // ═══════════════════════════════════════════════════════════════
@@ -121,38 +121,35 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
       let finalCard: ActionCard | null = null;
 
       for (const act of data.actions ?? []) {
-        if (act.action === 'sign_me_up' && act.svcId && act.slotId) {
-          if (!user) continue;
-          onAIVolunteerSignup(act.svcId, act.slotId, { name: user.name, email: user.email });
-          const svc = services.find(s => String(s.id) === String(act.svcId));
-          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+        const plan = planAiAction(act, user);
+        if (!plan) continue;
+        if (plan.kind === 'signup') {
+          onAIVolunteerSignup(plan.svcId, plan.slotId, plan.vol);
+          const svc = services.find(s => String(s.id) === String(plan.svcId));
+          const slot = svc?.slots.find(sl => sl.id === plan.slotId);
           if (svc && slot) {
-            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], ['You', `${user.name} · ${user.email}`], ['', '✓ Confirmation sent']] };
+            const whoRow: [string, string] = act.action === 'sign_me_up'
+              ? ['You', `${plan.vol.name} · ${plan.vol.email}`]
+              : ['Volunteer', `${plan.vol.name} · ${plan.vol.email}`];
+            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], whoRow, ['', '✓ Confirmation sent']] };
           }
-        } else if (act.action === 'assign_volunteer' && act.svcId && act.slotId && act.volunteerName && act.volunteerEmail) {
-          onAIVolunteerSignup(act.svcId, act.slotId, { name: act.volunteerName, email: act.volunteerEmail });
-          const svc = services.find(s => String(s.id) === String(act.svcId));
-          const slot = svc?.slots.find(sl => sl.id === act.slotId);
-          if (svc && slot) {
-            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], ['Volunteer', `${act.volunteerName} · ${act.volunteerEmail}`], ['', '✓ Confirmation sent']] };
-          }
-        } else if (act.action === 'remove_signup' && act.svcId && act.slotId) {
-          onAIRemoveSignup(act.svcId, act.slotId);
-          const svc = services.find(s => String(s.id) === String(act.svcId));
-          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+        } else if (plan.kind === 'remove') {
+          onAIRemoveSignup(plan.svcId, plan.slotId);
+          const svc = services.find(s => String(s.id) === String(plan.svcId));
+          const slot = svc?.slots.find(sl => sl.id === plan.slotId);
           if (svc && slot) {
             finalCard = { title: 'Removed from service', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Assignment removed']] };
           }
-        } else if (act.action === 'request_coverage' && act.svcId && act.slotId) {
-          onAIRequestCoverage(act.svcId, act.slotId);
-          const svc = services.find(s => String(s.id) === String(act.svcId));
-          const slot = svc?.slots.find(sl => sl.id === act.slotId);
+        } else if (plan.kind === 'coverage') {
+          onAIRequestCoverage(plan.svcId, plan.slotId);
+          const svc = services.find(s => String(s.id) === String(plan.svcId));
+          const slot = svc?.slots.find(sl => sl.id === plan.slotId);
           if (svc && slot) {
             finalCard = { title: 'Looking for a substitute', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Coverage requested — admin notified']] };
           }
-        } else if (act.action === 'create_service' && act.service) {
-          await onAICreateService(act.service);
-          finalCard = { title: act.service.type, rows: [['Date', act.service.date], ['Time', act.service.time], ['Slots', `${act.service.slots.length} total`]] };
+        } else if (plan.kind === 'create') {
+          await onAICreateService(plan.service);
+          finalCard = { title: plan.service.type, rows: [['Date', plan.service.date], ['Time', plan.service.time], ['Slots', `${plan.service.slots.length} total`]] };
         }
       }
 
