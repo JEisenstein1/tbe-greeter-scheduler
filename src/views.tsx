@@ -29,6 +29,25 @@ interface ChatBubble {
   card: ActionCard | null;
 }
 
+function getTelemetrySessionId() {
+  if (typeof window === 'undefined') return 'server-session';
+  const key = 'tbe_telemetry_session_id';
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+  const id = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  window.localStorage.setItem(key, id);
+  return id;
+}
+
+function trackAppEvent(eventName: string, sessionId: string, properties: Record<string, unknown> = {}) {
+  fetch('/api/telemetry/events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName, sessionId, pagePath: window.location.pathname, properties }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 function ActionCard({ card }: { card: ActionCard }) {
   return (
     <div className="action-card">
@@ -68,6 +87,11 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
   const [isStreaming, setIsStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const telemetrySessionId = useMemo(() => getTelemetrySessionId(), []);
+
+  useEffect(() => {
+    trackAppEvent('chat_session_started', telemetrySessionId, { role: effectiveRole, signedIn: !!user });
+  }, [telemetrySessionId, effectiveRole, user?.email]);
 
   useEffect(() => {
     setMessages([{ role: 'ai', text: intro, card: null }]);
@@ -83,6 +107,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
       .filter(m => m.text?.trim())
       .map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text.slice(0, 1200) }));
     setMessages(m => [...m, { role: 'user', text: userText, card: null }]);
+    trackAppEvent('chat_message_sent', telemetrySessionId, { role: effectiveRole, messageLength: userText.length });
     setTyping(true);
     setIsStreaming(true);
 
@@ -94,6 +119,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userText,
+          sessionId: telemetrySessionId,
           history,
           role: effectiveRole,
           user: user ? { name: user.name, email: user.email } : null,
@@ -154,10 +180,12 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
       }
 
       setMessages(m => [...m, { role: 'ai', text: data.text, card: finalCard }]);
+      trackAppEvent('assistant_response_received', telemetrySessionId, { role: effectiveRole, responseLength: data.text?.length || 0, actionCount: data.actions?.length || 0, actionTypes: (data.actions || []).map(a => a.action) });
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       setTyping(false);
       const msg = err instanceof Error ? err.message : String(err);
+      trackAppEvent('assistant_response_failed', telemetrySessionId, { role: effectiveRole, error: msg });
       setMessages(m => [...m, { role: 'ai', text: `Error: ${msg}`, card: null }]);
     } finally {
       setIsStreaming(false);

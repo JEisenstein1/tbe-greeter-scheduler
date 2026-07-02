@@ -1,6 +1,7 @@
 export const config = { runtime: 'edge' };
 
 import { neon } from '@neondatabase/serverless';
+import { logChatTurn } from './_telemetry.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_MESSAGE_LENGTH = 2000;
@@ -17,8 +18,13 @@ const ALLOWED_PATTERNS = [
   // Natural scheduling language that users/admins use without saying "schedule".
   /\b(can|could|would|will|is|are)\b.*\b(help|do|cover|take|handle|be there|make it|available)\b.*\b(friday|saturday|shabbat|service|slot|night|morning|weekend|next week)\b/i,
   /\b(who|anyone|somebody|someone)\b.*\b(can|could|available|cover|help|do|take|handle)\b.*\b(friday|saturday|shabbat|service|slot|night|morning|weekend)\b/i,
+  /\b(who|what|which|show|list|display)\b.*\b(covering|assigned|open|available|filled|unfilled|slots?|spots?|services?|volunteers?|greeters?|ushers?)\b/i,
+  /\b(open|available|filled|unfilled)\b.*\b(slots?|spots?|services?|greeters?|ushers?)\b/i,
+  /\b(do|does|did|is|are)\b.*\b(need|assigned|already|covering|covered)\b.*\b(anyone|someone|somebody|volunteers?|greeters?|ushers?|friday|saturday|weekend|service)\b/i,
+  /\b(is|are)\b\s+[A-Z][a-z.'-]+\b.*\b(already|assigned|on|covering|scheduled)\b/i,
   /\b(i|we)\b.*\b(conflict|problem|issue|stuck|can'?t|cannot|unable)\b/i,
   /\b(do i|am i|should i|need to)\b.*\b(be there|show up|come|serve|help|signed up|on)\b/i,
+  /\b(am i|do you)\b.*\b(needed|need me)\b/i,
   /\b(what|show|list|when|am)\b.*\b(my|i)\b.*\b(dates?|services?|schedule|assignments?|signed\s+up)\b/i,
   /\b(add|assign|schedule|put|remove|unassign|take\s+off)\b.*\b(me|volunteer|greeter|usher|friday|saturday|shabbat|service|slot|roster)\b/i,
   /\b(add|assign|schedule|put)\b\s+\w+\s+\b(for|to|on)\b\s+\b(friday|saturday|shabbat|service|slot|greeter|usher)\b/i,
@@ -170,6 +176,22 @@ async function logAiInteraction(entry) {
       ${safeSnippet(entry.prompt)}, ${safeSnippet(entry.responseText)}, ${entry.responseText ? entry.responseText.length : 0},
       ${entry.actionCount || 0}, ${entry.actionTypes || []}, ${entry.error || null}, ${JSON.stringify(entry.metadata || {})}
     )`;
+    if (entry.sessionId) {
+      await logChatTurn({
+        sessionId: entry.sessionId,
+        userEmail: entry.userEmail,
+        userRole: entry.userRole,
+        userMessage: entry.prompt,
+        assistantMessage: entry.responseText,
+        model: entry.model,
+        latencyMs: entry.latencyMs,
+        actionCount: entry.actionCount || 0,
+        actionTypes: entry.actionTypes || [],
+        status: entry.status,
+        error: entry.error,
+        metadata: entry.metadata || {},
+      }, sql);
+    }
   } catch (err) {
     console.error('AI telemetry log failed', err?.message || err);
   }
@@ -194,7 +216,7 @@ export function sanitizeUserMessage(rawMessage) {
 
 function isSchedulingFollowUp(message, history = []) {
   const lower = message.toLowerCase();
-  if (!/\b(how about|what about|next|this|following|same|that one|yes|no|friday|saturday|shabbat|morning|evening)\b/i.test(lower)) return false;
+  if (!/\b(how about|what about|next|this|following|same|that one|yes|no|friday|saturday|shabbat|morning|evening|try again|not what i asked|what did i just ask|i mean)\b/i.test(lower)) return false;
   const priorText = history.slice(-4).map(h => h.content).join('\n').toLowerCase();
   if (!priorText) return false;
   return ALLOWED_PATTERNS.some(pattern => pattern.test(priorText)) || /\b(add|assign|schedule|remove|debbie|volunteer|slot|service)\b/i.test(priorText);
@@ -464,8 +486,15 @@ function extractRemovalVolunteerName(message) {
 function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [], history = []) {
   if (role !== 'admin') return null;
   const priorText = history.slice(-4).map(h => h.content).join('\n');
+  const followUpAssignment = /\b(what about|how about)\b/i.test(message) && /\b(fill|assign|schedule|add|greeters?|ushers?|slots?)\b/i.test(priorText);
+  // Status/availability questions can mention a volunteer + date but are not mutation requests.
+  // Example: "Can Debbie help Friday if she is already assigned?" should answer status,
+  // not put Debbie into a second open Friday slot. Preserve explicit assignment follow-ups
+  // where recent history supplies the mutation intent.
+  if (!followUpAssignment && /\b(who|what|which|show|list|display|already|assigned|covering|covered|open|available|filled|unfilled|need anyone|needs? someone|needs? somebody|if)\b/i.test(message)
+    && !/\b(add|assign|schedule|put|sign up|put down)\b/i.test(message)) return null;
   const naturalAssignment = /\b(can|could|would|will|is|what about|how about)\b.*\b(do|cover|take|handle|help|available|make it)\b/i.test(message)
-    || (/\b(what about|how about)\b/i.test(message) && /\b(fill|assign|schedule|add|greeters?|ushers?|slots?)\b/i.test(priorText));
+    || followUpAssignment;
   const assignmentLike = /\b(add|assign|schedule|put|sign up)\b/i.test(message) || naturalAssignment || (/\b(next|this|following|how about|what about|friday|saturday|shabbat|week)\b/i.test(message) && /\b(add|assign|schedule|put|sign up|look up|fill|greeters?|ushers?|slots?)\b/i.test(priorText));
   if (!assignmentLike) return null;
   const requestedName = extractRequestedVolunteerName(message) || extractRequestedVolunteerName(priorText);
@@ -655,23 +684,26 @@ export default async function handler(req) {
   let body;
   try { body = await req.json(); } catch { return jsonResponse({ error: 'Invalid JSON' }, 400); }
 
+  const requestSessionId = typeof body?.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim().slice(0, 160) : `anon-${crypto.randomUUID()}`;
+
   const sanitized = sanitizeUserMessage(body?.message);
   const sessionUser = await verifySessionFromRequest(req);
   const userRole = sessionUser?.role || 'guest';
   const userEmail = sessionUser?.email;
   if (!sanitized.ok) {
-    await logAiInteraction({ status: 'rejected', latencyMs: Date.now() - startedAt, prompt: String(body?.message || ''), userRole, userEmail, model, error: sanitized.error });
+    await logAiInteraction({ sessionId: requestSessionId, status: 'rejected', latencyMs: Date.now() - startedAt, prompt: String(body?.message || ''), userRole, userEmail, model, error: sanitized.error });
     return jsonResponse({ error: sanitized.error }, 400);
   }
 
   if (userRole !== 'admin' && isPrivateRosterRequest(sanitized.message, userRole)) {
-    await logAiInteraction({ status: 'blocked_private_data', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: PRIVATE_DATA_REFUSAL_TEXT, metadata: { reason: 'private_roster_request' } });
+    await logAiInteraction({ sessionId: requestSessionId, status: 'blocked_private_data', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: PRIVATE_DATA_REFUSAL_TEXT, metadata: { reason: 'private_roster_request' } });
     return jsonResponse({ text: PRIVATE_DATA_REFUSAL_TEXT, actions: [] });
   }
   const history = normalizeHistory(body?.history);
+  const sessionId = requestSessionId;
   const scope = classifyMessageScope(sanitized.message, history);
   if (!scope.allowed) {
-    await logAiInteraction({ status: 'blocked', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: REFUSAL_TEXT, metadata: { reason: scope.reason } });
+    await logAiInteraction({ sessionId, status: 'blocked', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, responseText: REFUSAL_TEXT, metadata: { reason: scope.reason } });
     return jsonResponse({ text: REFUSAL_TEXT, actions: [] });
   }
 
@@ -687,6 +719,7 @@ export default async function handler(req) {
   if (simpleDeterministic) {
     simpleDeterministic.actions = filterActionsByRole(simpleDeterministic.actions, role);
     await logAiInteraction({
+      sessionId,
       status: 'ok',
       latencyMs: Date.now() - startedAt,
       prompt: sanitized.message,
@@ -704,6 +737,7 @@ export default async function handler(req) {
   if (deterministic) {
     deterministic.actions = filterActionsByRole(deterministic.actions, role);
     await logAiInteraction({
+      sessionId,
       status: 'ok',
       latencyMs: Date.now() - startedAt,
       prompt: sanitized.message,
@@ -749,7 +783,7 @@ export default async function handler(req) {
     if (!openRouterRes.ok) {
       const errorText = await openRouterRes.text();
       console.error('OpenRouter API error', openRouterRes.status, errorText);
-      await logAiInteraction({ status: 'provider_error', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, error: `OpenRouter ${openRouterRes.status}: ${errorText.slice(0, 500)}` });
+      await logAiInteraction({ sessionId, status: 'provider_error', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, error: `OpenRouter ${openRouterRes.status}: ${errorText.slice(0, 500)}` });
       return jsonResponse({ error: `OpenRouter API request failed (${openRouterRes.status})` }, 502);
     }
 
@@ -759,6 +793,7 @@ export default async function handler(req) {
       role,
     );
     await logAiInteraction({
+      sessionId,
       status: 'ok',
       latencyMs: Date.now() - startedAt,
       prompt: sanitized.message,
@@ -773,7 +808,7 @@ export default async function handler(req) {
     return jsonResponse(result);
   } catch (err) {
     console.error('Chat endpoint error', err);
-    await logAiInteraction({ status: 'error', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, error: err?.message || String(err) });
+    await logAiInteraction({ sessionId, status: 'error', latencyMs: Date.now() - startedAt, prompt: sanitized.message, userRole, userEmail, model, error: err?.message || String(err) });
     return jsonResponse({ error: 'Chat endpoint failed' }, 500);
   }
 }

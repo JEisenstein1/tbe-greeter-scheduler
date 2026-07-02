@@ -80,8 +80,24 @@ This file records snapshots, test-driven changes, and rollback notes made during
 - Verification: new targeted suite → 6/6 passing; `chat-handler-behavior` + natural jank targeted run → 24/24 passing; full `npm test` → 18 files / 136 tests passing; `npm run build` → TypeScript + Vite production build passing.
 - Rollback: revert `api/chat.js`, `src/__tests__/ai-natural-language-jank-regression.test.ts`, `docs/ai-persona-assignment-scenarios.md`, and this changelog section.
 
+## 2026-07-01 — AI normal conversation question-vs-action rubric
+
+- Finding: the prior natural-language tests still missed normal status/open-slot questions. Prompts such as “Who is covering Friday night?”, “Can you show me the open slots?”, “Do we need anyone this weekend?”, “Is Debbie already on Friday?”, “Am I needed?”, and repair follow-ups like “That is not what I asked” were blocked as off-topic. Worse, “Can Debbie help Friday if she is already assigned?” triggered a deterministic `assign_volunteer` action and put Debbie into another open Friday slot.
+- Change: added `src/__tests__/ai-normal-conversation-rubric.test.ts` with a question-vs-action rubric for admin, volunteer, and guest prompts; it asserts normal scheduling questions are allowed, return no mutation actions, and route to the LLM when conversational; explicit assignment still remains deterministic.
+- Fixes: broadened the scope gate for status/open-slot/need/assigned questions; added scheduling-thread repair follow-up recognition; guarded `maybeBuildAdminAssignmentAction` so status/availability questions do not mutate unless the admin explicitly says add/assign/schedule/put/sign up.
+- Verification: new rubric first failed 10/11, then 3/15 after expanded cases, and now passes 15/15.
+- Rollback: revert `api/chat.js`, `src/__tests__/ai-normal-conversation-rubric.test.ts`, `docs/ai-persona-assignment-scenarios.md`, and this changelog section.
+
 ## Claude Code consultation attempt
 
 - `claude auth status --text` showed Claude Max login for Jon.
 - `claude -p` planning call returned API `401 Invalid authentication credentials`.
 - No files were changed by Claude Code. Hermes proceeded with documented plan in `docs/functional-e2e-test-plan.md`.
+
+## 2026-07-02 — Chat/session telemetry and product event logging
+
+- Snapshot: `pre-telemetry-deploy-20260702T171929Z` at `0d3843b4b9c19776cfef01056376d9886ed87a9e`.
+- Bundle: `/root/staging/tbe-greeter-snapshots/pre-telemetry-deploy-20260702T171929Z.bundle`.
+- Change: added structured telemetry helpers, chat session/message tables, app event log, transaction log, admin telemetry endpoint, and frontend chat event/session instrumentation.
+- Tests: `npm test` → 20 files / 154 tests passed; `npm run build` passed.
+- Rollback: `git reset --hard pre-telemetry-deploy-20260702T171929Z` plus Vercel rollback if production deploy needs reverting.
