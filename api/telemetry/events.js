@@ -1,6 +1,6 @@
-import { logAppEvent } from '../_telemetry.js';
-import { COOKIE_NAME, parseCookies, verifySessionCookie } from '../_auth.js';
-import { handleError } from '../_http.js';
+import { logAppEvent } from '../../lib/_telemetry.js';
+import { COOKIE_NAME, parseCookies, verifySessionCookie } from '../../lib/_auth.js';
+import { handleError } from '../../lib/_http.js';
 
 const ALLOWED_EVENTS = new Set([
   'page_view', 'feature_opened', 'button_clicked', 'form_started', 'form_submitted',

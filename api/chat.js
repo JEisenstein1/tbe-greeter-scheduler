@@ -1,7 +1,7 @@
 export const config = { runtime: 'edge' };
 
 import { neon } from '@neondatabase/serverless';
-import { logChatTurn } from './_telemetry.js';
+import { logChatTurn } from '../lib/_telemetry.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_MESSAGE_LENGTH = 2000;

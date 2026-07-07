@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../api/_auth.js', async () => {
-  const actual = await vi.importActual('../../api/_auth.js');
+vi.mock('../../lib/_auth.js', async () => {
+  const actual = await vi.importActual('../../lib/_auth.js');
   return { ...actual, verifySessionCookie: vi.fn(() => null) };
 });
 
 // @ts-expect-error Vercel API route is a plain JS module.
-const { getSignupActor, getEmailProvider } = await import('../../api/services/signup.js');
+const { getSignupActor, getEmailProvider } = await import('../../lib/signup.js');
 
 describe('services signup API contract', () => {
   it('allows public volunteer signup with submitted name and email when no session cookie exists', () => {

@@ -1,4 +1,4 @@
-import { randomToken, requiredEnv, serializeCookie, STATE_COOKIE_NAME, publicBaseUrl } from '../../_auth.js';
+import { randomToken, requiredEnv, serializeCookie, STATE_COOKIE_NAME, publicBaseUrl } from '../../../lib/_auth.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

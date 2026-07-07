@@ -1,6 +1,6 @@
-import { db, hasDb, listServices, migrate, seedServices } from '../_db.js';
-import { INITIAL_SERVICES } from '../_data.js';
-import { handleError } from '../_http.js';
+import { db, hasDb, listServices, migrate, seedServices } from '../../lib/_db.js';
+import { INITIAL_SERVICES } from '../../lib/_data.js';
+import { handleError } from '../../lib/_http.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

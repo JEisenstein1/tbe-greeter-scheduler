@@ -1,6 +1,6 @@
-import { db } from '../_db.js';
-import { COOKIE_NAME, parseCookies, verifySessionCookie } from '../_auth.js';
-import { handleError } from '../_http.js';
+import { db } from '../../lib/_db.js';
+import { COOKIE_NAME, parseCookies, verifySessionCookie } from '../../lib/_auth.js';
+import { handleError } from '../../lib/_http.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

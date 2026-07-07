@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error JS module intentionally shared with Vercel functions.
-import { buildEventPayload, buildTransactionPayload, safeSnippet } from '../../api/_telemetry.js';
+import { buildEventPayload, buildTransactionPayload, safeSnippet } from '../../lib/_telemetry.js';
 
 describe('telemetry payload helpers', () => {
   it('redacts sensitive keys and truncates long content', () => {

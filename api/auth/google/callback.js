@@ -1,5 +1,5 @@
-import { clearCookie, createSessionCookie, parseCookies, publicBaseUrl, requiredEnv, roleForEmail, serializeCookie, STATE_COOKIE_NAME, COOKIE_NAME } from '../../_auth.js';
-import { db, hasDb, migrate, upsertUser } from '../../_db.js';
+import { clearCookie, createSessionCookie, parseCookies, publicBaseUrl, requiredEnv, roleForEmail, serializeCookie, STATE_COOKIE_NAME, COOKIE_NAME } from '../../../lib/_auth.js';
+import { db, hasDb, migrate, upsertUser } from '../../../lib/_db.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

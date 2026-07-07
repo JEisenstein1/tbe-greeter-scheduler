@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error Vercel API route helper is intentionally plain JS outside the Vite src tree.
-import { COOKIE_NAME, createSessionCookie, parseCookies, roleForEmail, serializeCookie, verifySessionCookie } from '../../api/_auth.js';
+import { COOKIE_NAME, createSessionCookie, parseCookies, roleForEmail, serializeCookie, verifySessionCookie } from '../../lib/_auth.js';
 
 describe('Vercel API auth helpers', () => {
   it('signs and verifies session cookies without exposing writable client state', () => {

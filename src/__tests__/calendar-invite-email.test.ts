@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error Vercel API route is a plain JS module.
-const { buildCalendarInvite, buildRawEmail, buildResendPayload } = await import('../../api/services/signup.js');
+const { buildCalendarInvite, buildRawEmail, buildResendPayload } = await import('../../lib/signup.js');
 
 describe('calendar invite email payloads', () => {
   const unfold = (ics: string) => ics.replace(/\r\n[ \t]/g, '');
