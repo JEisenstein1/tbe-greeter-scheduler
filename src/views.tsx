@@ -171,7 +171,7 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
           const svc = services.find(s => String(s.id) === String(plan.svcId));
           const slot = svc?.slots.find(sl => sl.id === plan.slotId);
           if (svc && slot) {
-            finalCard = { title: 'Looking for a substitute', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Coverage requested — admin notified']] };
+            finalCard = { title: 'Looking for a substitute', rows: [['Event', `${svc.type} · ${svc.date}`], ['Role', `${slot.role}${slot.timeSlot ? ` · ${slot.timeSlot}` : ''}`], ['Status', 'Coverage requested — admins will assign a substitute']] };
           }
         } else if (plan.kind === 'create') {
           await onAICreateService(plan.service);
@@ -415,8 +415,9 @@ export function CalendarView({ services, defaultView, user, onOpenAuth, onAssign
 }
 
 function GridCalendar({ services, user, onOpenAuth, onAssign, onRemove, onSignUp, onRequestCoverage, onSelfRemove, onCreateEvent, onEditEvent, onDeleteEvent }: CalendarViewProps) {
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(4); // May
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth());
   const [selected, setSelected] = useState<string | null>(null);
 
   const todayISO = new Date().toISOString().slice(0, 10);
@@ -956,6 +957,9 @@ export function EmailView({ onBack }: { onBack?: () => void }) {
           <button className="btn gold" onClick={startSend} disabled={!!(sendState && sendState.some(s => s.status === 'sending'))}>
             <Icon name="send" size={14} /> Send to All Volunteers
           </button>
+          <div style={{ fontSize: 11.5, color: 'var(--c-muted)', fontStyle: 'italic', marginTop: 6 }}>
+            Preview only — bulk reminders are not yet connected to a live email provider. Assignment confirmations do send for real.
+          </div>
           {sendState && (
             <div className="card" style={{ padding: '8px 16px', marginTop: 8 }}>
               {sendState.map((v, i) => (
@@ -1245,7 +1249,7 @@ export function CoverageView({ services, onBack, onAssign, onClearCoverage }: Co
                   <div className="what">
                     {svc.date.split(',')[0]} · {svc.time}{slot.timeSlot ? ` · ${slot.timeSlot}` : ''}
                   </div>
-                  <div className="since">Distribution list notified</div>
+                  <div className="since">Awaiting a substitute</div>
                 </div>
               </div>
               <div className="body">

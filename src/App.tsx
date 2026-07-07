@@ -74,8 +74,12 @@ async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
     credentials: 'include',
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(body?.error || `HTTP ${res.status}`), { status: res.status });
   return body as T;
+}
+
+function apiStatus(err: unknown): number | undefined {
+  return err instanceof Error ? (err as Error & { status?: number }).status : undefined;
 }
 
 export default function App() {
@@ -138,22 +142,35 @@ export default function App() {
     setTimeout(() => setToasts(ts => ts.filter(t => t.id !== id)), 3200);
   };
 
+  // Re-sync from the server after a write conflict so the UI shows who actually
+  // holds the slot instead of an optimistic (and wrong) local state.
+  const refreshServices = () => {
+    apiJson<{ services: Service[] }>('/api/services')
+      .then(({ services }) => { if (services?.length) setServices(services); })
+      .catch(() => { /* fixture/demo mode */ });
+  };
+
   const onAssign = (svc: Service, slot: import('./types').Slot) => setAssignTarget({ svc, slot });
   const onRemove = async (svcId: string | number, slotId: string) => {
     try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
-    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
-      ...s,
-      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: null, volunteerEmail: null })),
-    })));
+    setServices(prev => applyRemoveSignup(prev, svcId, slotId));
     pushToast('Volunteer removed');
   };
   const onConfirmAssign = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
     let delivery = 'invite prepared';
-    try { const out = await apiJson<{ delivery?: { status?: string } }>('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); delivery = out.delivery?.status === 'sent' ? 'invite sent' : delivery; } catch { /* allow fixture/demo mode */ }
-    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
-      ...s,
-      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
-    })));
+    try {
+      const out = await apiJson<{ delivery?: { status?: string } }>('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) });
+      delivery = out.delivery?.status === 'sent' ? 'invite sent' : delivery;
+    } catch (err) {
+      if (apiStatus(err) === 409) {
+        setAssignTarget(null);
+        pushToast('That slot was just filled by someone else');
+        refreshServices();
+        return;
+      }
+      /* allow fixture/demo mode */
+    }
+    setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
     setAssignTarget(null);
     pushToast(`${vol.name.split(' ')[0]} assigned · ${delivery}`);
   };
@@ -167,11 +184,18 @@ export default function App() {
     const svc = services.find(s => s.id === svcId);
     const slot = svc?.slots.find(sl => sl.id === slotId);
     const email = svc && slot ? buildConfirmationEmail(svc, slot, vol) : null;
-    try { await apiJson('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); } catch { /* allow fixture/demo mode */ }
-    setServices(prev => prev.map(s => s.id !== svcId ? s : ({
-      ...s,
-      slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
-    })));
+    try {
+      await apiJson('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) });
+    } catch (err) {
+      if (apiStatus(err) === 409) {
+        setSignupTarget(null);
+        pushToast('That slot was just filled by someone else');
+        refreshServices();
+        return;
+      }
+      /* allow fixture/demo mode */
+    }
+    setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
     setSignupTarget(null);
     pushToast(email ? `Confirmation prepared for ${email.to}` : 'Confirmation prepared');
   };
@@ -232,9 +256,20 @@ export default function App() {
   };
 
   const onAIVolunteerSignup = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
-    try { await apiJson('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) }); } catch { /* allow fixture/demo mode */ }
+    let delivery = 'confirmation prepared';
+    try {
+      const out = await apiJson<{ delivery?: { status?: string } }>('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) });
+      if (out.delivery?.status === 'sent') delivery = `confirmation sent to ${vol.email}`;
+    } catch (err) {
+      if (apiStatus(err) === 409) {
+        pushToast('That slot was just filled by someone else');
+        refreshServices();
+        return;
+      }
+      /* allow fixture/demo mode */
+    }
     setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
-    pushToast(`Signed up — confirmation sent to ${vol.email}`);
+    pushToast(`Signed up — ${delivery}`);
   };
   const onAICreateService = async (svc: Service) => {
     try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); } catch { /* allow fixture/demo mode */ }

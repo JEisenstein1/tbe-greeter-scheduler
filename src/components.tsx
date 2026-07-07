@@ -327,7 +327,7 @@ export function AssignModal({ svc, slot, onClose, onConfirm }: AssignModalProps)
               </div>
               <div className="row">
                 <div className="lbl">Subj</div>
-                <div className="val">You're scheduled — {svc.type}, {svc.date.split(',')[1].trim()}</div>
+                <div className="val">You're scheduled — {svc.type}, {(svc.date.split(',')[1] ?? svc.date).trim()}</div>
               </div>
               <div className="body">
                 {`Shalom ${vol.name.split(' ')[0]},\n\nYou've been scheduled as `}<strong>{slot.role}</strong>{` for `}<strong>{svc.type}</strong>{` on `}<strong>{svc.date}</strong>{` at `}<strong>{svc.time}</strong>{`${slot.timeSlot ? ` (${slot.timeSlot})` : ''}.\n\nA calendar invite will be attached to the confirmation email. Thank you for helping us welcome the community.\n\n— Temple Beth El`}

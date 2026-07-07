@@ -62,10 +62,8 @@ export const SYNAGOGUE: Synagogue = {
   },
 };
 
-let __sid = 1;
-const slot = (role: string, timeSlot: string | null = null, volunteer: string | null = null, volunteerEmail: string | null = null): Slot => ({
-  id: 's' + (__sid++),
-  role, timeSlot, volunteer, volunteerEmail,
+const slot = (id: string, role: string, timeSlot: string | null = null): Slot => ({
+  id, role, timeSlot, volunteer: null, volunteerEmail: null,
 });
 
 const fmtDate = (iso: string) => {
@@ -73,46 +71,48 @@ const fmtDate = (iso: string) => {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 };
 
-let __id = 1;
-const mkService = (dateISO: string, time: string, type: string, slots: Slot[], isHH = false): Service => ({
-  id: __id++,
-  dateISO, date: fmtDate(dateISO), time, type, isHH, slots,
+const mkService = (id: string, dateISO: string, time: string, type: string, slots: Slot[], isHH = false): Service => ({
+  id, dateISO, date: fmtDate(dateISO), time, type, isHH, slots,
 });
 
-const friShabbat = (iso: string): Service =>
-  mkService(iso, '6:30 PM', 'Kabbalat Shabbat', [slot('Greeter')]);
+const isoOf = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-const satShabbat = (iso: string): Service =>
-  mkService(iso, '9:30 AM', 'Shabbat Morning', [slot('Greeter')]);
+// Weekly Shabbat services generated relative to a reference date so the demo
+// fixture never goes stale: one past weekend (exercises the collapsed-past UI)
+// plus `futureWeekends` upcoming Friday/Saturday pairs. Deterministic date-based
+// ids keep the fixture aligned with the string ids the database path uses.
+export function buildShabbatServices(todayISO: string, pastWeekends = 1, futureWeekends = 9): Service[] {
+  const today = new Date(todayISO + 'T12:00:00');
+  const friday = new Date(today);
+  friday.setDate(friday.getDate() - ((friday.getDay() - 5 + 7) % 7) - pastWeekends * 7);
+  const out: Service[] = [];
+  for (let w = 0; w < pastWeekends + futureWeekends; w++) {
+    const fri = new Date(friday); fri.setDate(fri.getDate() + w * 7);
+    const sat = new Date(fri);    sat.setDate(sat.getDate() + 1);
+    const friISO = isoOf(fri), satISO = isoOf(sat);
+    out.push(mkService(`fri-${friISO}`, friISO, SYNAGOGUE.defaultFridayTime, 'Kabbalat Shabbat', [slot(`fri-${friISO}-s1`, 'Greeter')]));
+    out.push(mkService(`sat-${satISO}`, satISO, SYNAGOGUE.defaultSaturdayTime, 'Shabbat Morning', [slot(`sat-${satISO}-s1`, 'Greeter')]));
+  }
+  return out;
+}
 
-const hhWindows = (windows: string[]): Slot[] =>
-  windows.flatMap(w =>
-    ['Greeter 1', 'Greeter 2', 'Usher 1', 'Usher 2'].map(role => slot(role, w))
+const hhWindows = (svcId: string, windows: string[]): Slot[] => {
+  let n = 1;
+  return windows.flatMap(w =>
+    ['Greeter 1', 'Greeter 2', 'Usher 1', 'Usher 2'].map(role => slot(`${svcId}-s${n++}`, role, w))
   );
+};
+
+const HH_WINDOWS = ['9:00 AM – 9:30 AM', '9:30 AM – 10:00 AM', '10:00 AM – 10:30 AM', '10:30 AM – 11:00 AM'];
+
+export const HIGH_HOLIDAY_SERVICES: Service[] = [
+  mkService('hh-2026-09-20', '2026-09-20', '9:00 AM – 1:00 PM', 'Rosh Hashanah Morning', hhWindows('hh-2026-09-20', HH_WINDOWS), true),
+  mkService('hh-2026-09-22', '2026-09-22', '9:00 AM – 1:00 PM', 'Rosh Hashanah Second Day', hhWindows('hh-2026-09-22', HH_WINDOWS), true),
+  mkService('hh-2026-09-29', '2026-09-29', '9:00 AM – 1:00 PM', 'Yom Kippur Morning', hhWindows('hh-2026-09-29', HH_WINDOWS), true),
+];
 
 export const INITIAL_SERVICES: Service[] = [
-  friShabbat('2026-05-29'),
-  satShabbat('2026-05-30'),
-
-  friShabbat('2026-06-05'),
-  satShabbat('2026-06-06'),
-  friShabbat('2026-06-12'),
-  satShabbat('2026-06-13'),
-  friShabbat('2026-06-19'),
-  satShabbat('2026-06-20'),
-  friShabbat('2026-06-26'),
-  satShabbat('2026-06-27'),
-
-  mkService('2026-09-20', '9:00 AM – 1:00 PM', 'Rosh Hashanah Morning',
-    hhWindows(['9:00 AM – 9:30 AM', '9:30 AM – 10:00 AM', '10:00 AM – 10:30 AM', '10:30 AM – 11:00 AM']),
-    true
-  ),
-  mkService('2026-09-22', '9:00 AM – 1:00 PM', 'Rosh Hashanah Second Day',
-    hhWindows(['9:00 AM – 9:30 AM', '9:30 AM – 10:00 AM', '10:00 AM – 10:30 AM', '10:30 AM – 11:00 AM']),
-    true
-  ),
-  mkService('2026-09-29', '9:00 AM – 1:00 PM', 'Yom Kippur Morning',
-    hhWindows(['9:00 AM – 9:30 AM', '9:30 AM – 10:00 AM', '10:00 AM – 10:30 AM', '10:30 AM – 11:00 AM']),
-    true
-  ),
-];
+  ...buildShabbatServices(isoOf(new Date())),
+  ...HIGH_HOLIDAY_SERVICES,
+].sort((a, b) => a.dateISO.localeCompare(b.dateISO));

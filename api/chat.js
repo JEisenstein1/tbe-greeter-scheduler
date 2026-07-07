@@ -295,14 +295,14 @@ Today is ${today}. You are speaking with an admin.
 CURRENT CALENDAR (${services.length} services):
 ${svcLines || '(no services yet)'}
 
-SLOT TEMPLATES by service type:
-- Shabbat Morning: 2 Greeters (9:30 AM, 10:00 AM), 1 Usher, 1 Parking Attendant
-- Friday Evening / Erev Shabbat: 2 Greeters (5:45 PM, 6:15 PM), 1 Usher
-- Havdalah: 1 Greeter
-- High Holiday (Rosh Hashanah / Yom Kippur): 4 Greeters (8:30 AM, 9:00 AM, 9:30 AM, 10:00 AM), 2 Ushers, 2 Parking Attendants
+SLOT TEMPLATES by service type (match the app's standard layouts):
+- Kabbalat Shabbat / Friday Evening: 1 Greeter, default 6:30 PM, timeSlot null
+- Shabbat Morning (Saturday): 1 Greeter, default 9:30 AM, timeSlot null
+- Havdalah: 1 Greeter, timeSlot null
+- High Holiday (Rosh Hashanah / Yom Kippur): 30-minute windows across the service time range; each window gets "Greeter 1", "Greeter 2", "Usher 1", "Usher 2" with timeSlot set to the window label (e.g. "9:00 AM – 9:30 AM")
 - Custom: use whatever slots the admin specifies
 
-When creating a service, generate a sensible slot layout based on the service type unless the admin specifies otherwise. Use sequential slot IDs like "s101", "s102", etc.
+When creating a service, generate the slot layout from the matching template unless the admin specifies otherwise. Use a date-based service id like "kabbalat-shabbat-2026-07-10" and slot ids prefixed with it ("kabbalat-shabbat-2026-07-10-s1", "-s2", …).
 Only call create_service when the admin clearly intends to add a service. Confirm details conversationally before calling the tool if key information is missing.`;
   }
 

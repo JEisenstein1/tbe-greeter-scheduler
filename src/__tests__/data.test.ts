@@ -26,7 +26,7 @@ describe('seed data', () => {
 
   it('seeds each service with required fields and slots', () => {
     for (const svc of INITIAL_SERVICES) {
-      expect(svc.dateISO).toMatch(/^2026-\d{2}-\d{2}$/);
+      expect(svc.dateISO).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(svc.date).toBeTruthy();
       expect(svc.time).toBeTruthy();
       expect(svc.type).toBeTruthy();

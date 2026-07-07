@@ -2,11 +2,11 @@
 
 ## Project overview
 
-Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a service calendar and assign greeters/ushers. Volunteers sign up for slots. An AI assistant (Claude) handles natural-language scheduling for both roles.
+Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a service calendar and assign greeters/ushers. Volunteers sign up for slots. An AI assistant handles natural-language scheduling for both roles.
 
 **Live:** https://tbe-greeter-scheduler.vercel.app  
 **Repo:** https://github.com/JEisenstein1/tbe-greeter-scheduler  
-**Stack:** Vite + React 19 + TypeScript + Vercel Edge Functions + OpenRouter API
+**Stack:** Vite + React 19 + TypeScript + Vercel Functions + Neon Postgres + OpenRouter API
 
 ---
 
@@ -14,10 +14,15 @@ Mobile-first volunteer scheduling app for Temple Beth El. Admins manage a servic
 
 ```
 Browser (React SPA)
-  └── /api/chat  →  Vercel Edge Function  →  OpenRouter API (default: openai/gpt-5.5; override with OPENROUTER_MODEL)
+  ├── /api/services/*   → Vercel Node functions → Neon Postgres (services, slots, users, audit/email logs)
+  ├── /api/auth/*       → Google OAuth → HMAC-signed session cookie (tbe_session)
+  ├── /api/chat         → Vercel Edge Function → deterministic intent builders + OpenRouter (default: openai/gpt-5.5)
+  └── /api/telemetry/*  → app + chat telemetry tables
 ```
 
-All state is **in-memory** (resets on refresh). There is no database. The Vercel function is a stateless proxy — it receives the full services array on every request and sends it as context to the configured OpenRouter model.
+The client keeps a local `services` state seeded from `src/data.ts` and replaces it with `/api/services` (database) on load. Mutations are optimistic: the client POSTs to the API and applies the same change locally; API failures fall back to demo mode, except **409 conflicts**, which surface a toast and re-sync from the server. When no `DATABASE_URL` is configured, everything runs against the in-memory fixture ("demo mode").
+
+The seed fixture (`src/data.ts` + `api/_data.js`, kept in sync by hand) generates weekly Friday/Saturday Shabbat services **relative to today**, plus fixed 2026 High Holiday services, so a fresh deploy always has upcoming sign-up opportunities.
 
 ---
 
@@ -25,14 +30,21 @@ All state is **in-memory** (resets on refresh). There is no database. The Vercel
 
 | File | Purpose |
 |---|---|
-| `src/App.tsx` | Root component. All state lives here: `services`, `user`, `view`, modals, toasts. All mutation handlers defined here and passed down as props. |
-| `src/data.ts` | **Edit this to change seed data.** Volunteer list, admin list, synagogue config, initial services. Jon Eisenstein is the only admin. |
-| `src/types.ts` | All TypeScript interfaces. `Service`, `Slot`, `User`, `TweakValues`, etc. |
-| `src/views.tsx` | All page views. `AIView` owns the chat UI and API fetch logic. |
+| `src/App.tsx` | Root component. State: `services`, `user`, `view`, modals, toasts. All mutation handlers defined here, call `/api/services/*`, and apply pure transforms from `appLogic.ts`. |
+| `src/appLogic.ts` | Pure logic shared by app + tests: auth lookup, assignment finding, `applyAssignVolunteer`/`applyRemoveSignup`/`applyRequestCoverage`, AI action planning (`planAiAction`). Service ids compare loosely (`sameId`) because fixture ids were historically numeric while DB/AI ids are strings. |
+| `src/data.ts` | Seed data: volunteer roster, admin list, synagogue config, `buildShabbatServices()` evergreen fixture. |
+| `src/types.ts` | All TypeScript interfaces. |
+| `src/views.tsx` | Page views. `AIView` owns the chat UI, sends history + telemetry sessionId. |
 | `src/components.tsx` | Shared components: `Topbar`, `BotNav`, `AuthSheet`, `ServiceCard`, modals. |
-| `src/styles.css` | All CSS. Uses CSS custom properties (`--c-navy`, `--c-gold`, etc.) set by the theme system. |
-| `api/chat.js` | Vercel Edge Function. Sanitizes and domain-gates input, builds system prompt from request context, calls OpenRouter, returns `{ text, actions }` JSON. |
-| `server/index.ts` | Local Express dev server. During `npm run dev`, Vite proxies `/api/chat` here and the server delegates to the canonical `api/chat.js` handler so frontend tests use production chat logic. |
+| `src/styles.css` | All CSS, themed via CSS custom properties. |
+| `api/chat.js` | Edge Function. Sanitizes + domain-gates input, derives role from the session cookie (never from the request body), redacts the services payload per role, tries deterministic intent builders first, then calls OpenRouter with tool definitions. Logs every turn to `ai_interaction_log`. |
+| `api/_auth.js`, `api/_http.js` | Session cookie sign/verify (HMAC-SHA256 with `SESSION_SECRET`), `requireUser`/`requireAdmin` guards. |
+| `api/_db.js` | Neon client, schema (`services`, `slots`, `users`, `email_delivery_log`, `audit_log`), migrate/seed helpers. |
+| `api/_data.js` | JS mirror of the seed fixture for DB seeding and the no-DB fallback. |
+| `api/services/*.js` | CRUD: `index` (GET list, seeds empty DB), `create`/`delete` (admin), `signup`, `remove`, `request-coverage` (owner or admin). Signup sends a real confirmation email with an ICS calendar invite via Resend or Gmail. |
+| `api/auth/google/*` | Real Google OAuth (state cookie, code exchange, verified email required). Role comes from the `ADMIN_EMAILS` allowlist. |
+| `api/telemetry/*`, `api/_telemetry.js` | App-event + chat-turn logging. |
+| `server/index.ts` | Local Express dev server. Vite proxies `/api/*` here; `/api/chat` delegates to the canonical `api/chat.js` handler so local tests use production chat logic. Other `/api/*` routes are not served locally — the client falls back to demo mode. |
 
 ---
 
@@ -40,7 +52,7 @@ All state is **in-memory** (resets on refresh). There is no database. The Vercel
 
 ```typescript
 interface Service {
-  id: number | string;
+  id: number | string;    // DB/AI ids are strings; compare with sameId(), not ===
   dateISO: string;        // "2026-06-07"
   date: string;           // "Saturday, June 7"
   time: string;           // "9:30 AM"
@@ -50,74 +62,48 @@ interface Service {
 }
 
 interface Slot {
-  id: string;             // "s1", "s2", ...
-  role: string;           // "Greeter", "Usher", "Parking Attendant"
-  timeSlot: string | null; // "9:30 AM" or null
+  id: string;
+  role: string;            // "Greeter", "Usher", …
+  timeSlot: string | null; // HH window label or null
   volunteer: string | null;
   volunteerEmail: string | null;
   coverageRequested?: boolean;
 }
-
-interface User {
-  name: string;
-  email: string;
-  role: 'admin' | 'volunteer';
-  source: 'google' | 'password' | 'manual';
-}
 ```
+
+Postgres mirrors this in `services` + `slots` tables (see `api/_db.js` for schema).
 
 ---
 
-## Auth system (mock)
+## Auth
 
-Auth is entirely client-side. No real OAuth or passwords.
-
-- **Google button**: checks typed email against `ADMINS` / `VOLUNTEERS` arrays → signs in as that person, or creates a new volunteer from the email if not found
-- **Password**: same email lookup, any password accepted
-- **Guest**: name + email → new volunteer session
-- **Admin detection**: email must be in `ADMINS` array in `src/data.ts`
-- **Persistence**: `localStorage` stores the user object across refreshes
-
-To add an admin, add them to `ADMINS` in `src/data.ts`.
+- **Google sign-in (real)**: `/api/auth/google/start` → OAuth → `/api/auth/google/callback` sets an HttpOnly HMAC-signed `tbe_session` cookie (8h). Admin role = email in `ADMIN_EMAILS` env (default `jon.eisenstein@gmail.com`).
+- **Password tab (mock)**: client-side lookup against `ADMINS`/`VOLUNTEERS` arrays; any password. Produces a client-only session (no cookie), so server APIs treat it as unauthenticated.
+- **Guest**: name + email held in client state only.
+- The server **never trusts client-claimed roles**: `/api/chat` and `/api/services/*` derive role from the session cookie.
+- User state is not persisted across refreshes (`shouldRestorePersistedUser` returns false); the cookie session is restored via `/api/auth/me`.
 
 ---
 
 ## AI chat — how it works
 
-`AIView` (`src/views.tsx`) sends a POST to `/api/chat` with:
-```json
-{
-  "message": "user's message",
-  "role": "admin | volunteer",
-  "user": { "name": "...", "email": "..." },
-  "services": [ ...full services array... ]
-}
-```
+`AIView` POSTs to `/api/chat` with `{ message, sessionId, history, role, user, services, volunteers }` (volunteers only when the client believes the user is admin; the server re-derives the real role anyway).
 
-The Edge Function rejects off-topic/unsafe input before the model, then builds a strict Temple Beth-El greeter/scheduling system prompt that includes the full calendar, the user's current slots, and available open slots. It calls OpenRouter non-streaming and returns:
-```json
-{
-  "text": "model response text",
-  "actions": [
-    { "action": "sign_me_up", "svcId": "1", "slotId": "s3" },
-    { "action": "create_service", ...serviceObject },
-    { "action": "request_coverage", "svcId": "1", "slotId": "s3" }
-  ]
-}
-```
+The Edge Function:
+1. Sanitizes the message and rejects off-topic/unsafe input (allow/deny regex gates, confirmation/follow-up context awareness).
+2. Blocks roster/contact-info requests for non-admins; redacts the services payload per role (guests see `FILLED` instead of names).
+3. Tries **deterministic intent builders** first (admin assignment, removal, coverage, "my dates", guest guidance, Friday/Saturday bulk-pattern creation) — these return actions without calling the model.
+4. Otherwise calls OpenRouter with role-filtered tool definitions and post-filters returned actions by explicit user intent and role.
 
-The client processes actions — calling `onAIVolunteerSignup`, `onAICreateService`, or `onAIRequestCoverage` on `App.tsx` — which mutate the `services` state.
+Response: `{ text, actions }`. The client maps actions through `planAiAction` and applies them via App handlers.
 
-**Tools available:**
-- `sign_me_up(svcId, slotId)` — volunteer only
-- `request_coverage(svcId, slotId)` — volunteer only  
-- `create_service(id, dateISO, date, time, type, isHH, slots[])` — admin only
+**Tools:** `sign_me_up`, `request_coverage`, `remove_signup` (volunteer+admin), `assign_volunteer`, `create_service` (admin only). Guests get no tools.
 
 ---
 
 ## Theme system
 
-Four CSS variables define the palette (`--c-navy`, `--c-navy-soft`, `--c-gold`, `--c-gold-soft`, `--c-cream`, `--c-paper`). Applied via `useEffect` in `App.tsx` whenever tweaks change. The Tweaks panel (activated by `window.postMessage({ type: '__activate_edit_mode' })`) lets you switch palette, density, heading font, and default views.
+Six CSS variables define the palette (`--c-navy`, `--c-navy-soft`, `--c-gold`, `--c-gold-soft`, `--c-cream`, `--c-paper`), applied in `App.tsx`. The Tweaks panel (activated by `window.postMessage({ type: '__activate_edit_mode' })`) switches palette, density, heading font, and default views.
 
 ---
 
@@ -127,39 +113,43 @@ Four CSS variables define the palette (`--c-navy`, `--c-navy-soft`, `--c-gold`, 
 npm run dev      # Vite (port 5173) + Express (port 3001) concurrently
 npm run build    # TypeScript + Vite production build
 npx tsc --noEmit # Type-check only
+npm test         # Vitest suite (src/__tests__/)
+npm run e2e:prod # Production functional E2E (hits the live deployment — needs env/secrets)
 ```
 
 ## Environment variables
 
-| Variable | Where | Description |
-|---|---|---|
-| `OPENROUTER_API_KEY` | `.env` (local), Vercel settings (prod) | OpenRouter API key |
-| `OPENROUTER_MODEL` | optional `.env` / Vercel setting | Model override; defaults to `openai/gpt-5.5` |
-| `OPENROUTER_SITE_URL` | optional `.env` / Vercel setting | OpenRouter attribution URL |
-| `OPENROUTER_APP_NAME` | optional `.env` / Vercel setting | OpenRouter attribution app name |
+| Variable | Description |
+|---|---|
+| `OPENROUTER_API_KEY` | OpenRouter API key (required for chat) |
+| `OPENROUTER_MODEL` | Model override; defaults to `openai/gpt-5.5` |
+| `OPENROUTER_SITE_URL` / `OPENROUTER_APP_NAME` | OpenRouter attribution |
+| `DATABASE_URL` (or `POSTGRES_URL`) | Neon Postgres; absent → demo/fixture mode |
+| `SESSION_SECRET` | HMAC key for session cookies (required for real auth) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | Google OAuth |
+| `ADMIN_EMAILS` | Comma-separated admin allowlist (default `jon.eisenstein@gmail.com`) |
+| `RESEND_API_KEY` + `EMAIL_FROM` | Confirmation email via Resend |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` + `EMAIL_FROM` | Confirmation email via Gmail (fallback provider) |
+| `PUBLIC_BASE_URL` | Overrides the derived base URL for OAuth redirects |
 
 ---
 
 ## Deployment
 
-Push to `main` → Vercel auto-deploys (connected to GitHub). The `api/chat.js` Edge Function deploys automatically alongside the static frontend.
-
-`vercel.json`:
-```json
-{ "buildCommand": "vite build", "outputDirectory": "dist" }
-```
+Push to `main` → Vercel auto-deploys. `api/` functions deploy alongside the static frontend.
 
 ---
 
 ## Known limitations / future work
 
-- **No persistence** — all data resets on refresh. Next step: add a database (Vercel Postgres, Supabase, or similar) and persist `services` server-side.
-- **No real auth** — mock Google sign-in. Next step: NextAuth.js or Clerk with real Google OAuth.
-- **No real email** — confirmation emails are UI-only. Next step: Resend or SendGrid integration.
-- **No real Google Calendar** — invite buttons are decorative. Next step: Google Calendar API.
-- **Single-turn AI** — chat history is not sent to the API, so Claude has no memory of earlier messages in the conversation.
-- **In-memory volunteer list** — the 43 volunteers are hardcoded. Next step: admin UI to add/remove/edit volunteers.
-- **Service slots** — currently only one slot per service for Shabbat. The HH template has multiple windows. The EventEditModal supports custom slot creation.
+- **Local dev serves only `/api/chat`** — other API routes 404 locally, so the frontend runs in demo mode against the fixture. Next step: mount the `api/*` handlers in `server/index.ts`.
+- **Password/guest auth is still mock and client-side** — only Google sign-in creates a server session; password/guest users can't write through the authed APIs.
+- **Volunteer/admin roster is hardcoded** in `src/data.ts`; the admin Volunteers/Admins views edit local state only and reset on refresh.
+- **Bulk reminder email is preview-only** (`EmailView` simulates delivery); assignment confirmations do send for real.
+- **High Holiday fixture dates are fixed for 2026**; weekly Shabbat fixture is evergreen.
+- **Settings view is display-only** (edit buttons are decorative).
+
+See `docs/fable5-audit-20260707.md` for the latest audit, prioritized issues, and deferred recommendations.
 
 ---
 

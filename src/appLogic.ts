@@ -37,11 +37,14 @@ export function nameFromEmail(email: string): string {
 
 export function isSlotForUser(slot: Slot, user: User | null, query?: string): boolean {
   if (!slot.volunteer && !slot.volunteerEmail) return false;
-  const terms = [slot.volunteer, slot.volunteerEmail].filter(Boolean).map(v => String(v).toLowerCase());
   if (user?.email && slot.volunteerEmail && slot.volunteerEmail.toLowerCase() === user.email.toLowerCase()) return true;
   if (user?.name && slot.volunteer && slot.volunteer.toLowerCase() === user.name.toLowerCase()) return true;
   const q = query?.trim().toLowerCase();
-  return !!q && terms.some(t => t.includes(q));
+  if (!q) return false;
+  // Signed-out lookup: substring match on the display name, but emails only match
+  // exactly — a partial-email query (e.g. "gmail") must not enumerate assignments.
+  if (slot.volunteer && slot.volunteer.toLowerCase().includes(q)) return true;
+  return !!slot.volunteerEmail && slot.volunteerEmail.toLowerCase() === q;
 }
 
 export function findUserAssignments(services: Service[], user: User | null, todayISO: string, query?: string): { svc: Service; slot: Slot }[] {
@@ -67,22 +70,30 @@ export function buildConfirmationEmail(svc: Service, slot: Slot, vol: { name: st
   };
 }
 
+// Service ids are numbers in the local fixture but strings from the database and
+// from AI tool calls; compare loosely so an AI action never silently no-ops.
+export function sameId(a: Service['id'], b: Service['id']): boolean {
+  return String(a) === String(b);
+}
+
 export function applyAssignVolunteer(services: Service[], svcId: Service['id'], slotId: string, vol: { name: string; email: string }): Service[] {
-  return services.map(s => s.id !== svcId ? s : ({
+  // Filling a slot resolves any open coverage request on it, mirroring the
+  // backend (signup sets coverage_requested=FALSE).
+  return services.map(s => !sameId(s.id, svcId) ? s : ({
     ...s,
-    slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email })),
+    slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: vol.name, volunteerEmail: vol.email, coverageRequested: false })),
   }));
 }
 
 export function applyRemoveSignup(services: Service[], svcId: Service['id'], slotId: string): Service[] {
-  return services.map(s => s.id !== svcId ? s : ({
+  return services.map(s => !sameId(s.id, svcId) ? s : ({
     ...s,
     slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, volunteer: null, volunteerEmail: null, coverageRequested: false })),
   }));
 }
 
 export function applyRequestCoverage(services: Service[], svcId: Service['id'], slotId: string): Service[] {
-  return services.map(s => s.id !== svcId ? s : ({
+  return services.map(s => !sameId(s.id, svcId) ? s : ({
     ...s,
     slots: s.slots.map(sl => sl.id !== slotId ? sl : ({ ...sl, coverageRequested: true })),
   }));
