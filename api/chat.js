@@ -399,9 +399,18 @@ function parseToolArguments(args) {
   try { return JSON.parse(args); } catch { return {}; }
 }
 
+function sanitizeAssistantText(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .filter(line => !/\b(?:svcId|slotId)\s*:/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function extractOpenRouterResponse(data) {
   const message = data?.choices?.[0]?.message ?? {};
-  const text = typeof message.content === 'string' ? message.content : '';
+  const text = sanitizeAssistantText(message.content);
   const actions = [];
   for (const toolCall of message.tool_calls ?? []) {
     const name = toolCall.function?.name;
@@ -502,7 +511,8 @@ function extractRequestedVolunteerName(message) {
   return name;
 }
 function extractRemovalVolunteerName(message) {
-  const match = message.match(/\b(?:remove|unassign|take\s+off|drop|cancel)\s+([a-z][a-z.'-]*)\b/i);
+  const match = message.match(/\b(?:remove|unassign|take\s+off|drop|cancel)\s+([a-z][a-z.'-]*)\b/i)
+    || message.match(/\btake\s+([a-z][a-z.'-]*)\s+off\b/i);
   const name = match?.[1];
   if (!name || /^(me|my|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(name)) return '';
   return name;

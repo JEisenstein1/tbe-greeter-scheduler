@@ -89,6 +89,23 @@ describe('chat handler guard behavior', () => {
     expect(payload.messages[0].content).toContain('Temple Beth-El Greeter Scheduling Assistant');
   });
 
+  it('removes internal service and slot identifiers from model-facing chat text', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: {
+        content: 'This Friday has an open Greeter slot.\n- svcId: `kabbalat-shabbat-2026-07-24`\n- slotId: `kabbalat-shabbat-2026-07-24-s1`\nPlease sign in to help.',
+        tool_calls: [],
+      } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const res = await handler(request("What's coming up this Friday?"));
+    const body = await res.json();
+
+    expect(body.text).toContain('open Greeter slot');
+    expect(body.text).toContain('Please sign in');
+    expect(body.text).not.toMatch(/svcId|slotId|kabbalat-shabbat-2026-07-24-s1/i);
+  });
+
   it('drops model tool calls when the user phrased an ambiguous question instead of an explicit action', async () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
@@ -340,6 +357,24 @@ describe('chat handler guard behavior', () => {
     expect(res.status).toBe(200);
     expect(body.text).toContain('Removing you');
     expect(body.actions).toEqual([{ action: 'remove_signup', svcId: 'svc-fri', slotId: 'slot-1' }]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('removes the named volunteer rather than the signed-in admin for take-name-off phrasing', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const services = [{
+      id: 'svc-sat', dateISO: '2026-07-25', date: 'Saturday, July 25', time: '10:00 AM', type: 'Shabbat Morning', isHH: false,
+      slots: [{ id: 'slot-sat-g', role: 'Greeter', timeSlot: null, volunteer: 'Debbie Adler-Klein', volunteerEmail: 'dakmd75@gmail.com' }],
+    }];
+    const volunteers = [{ name: 'Debbie Adler-Klein', email: 'dakmd75@gmail.com', active: true }];
+
+    const res = await handler(request('Take Debbie off Saturday', 'admin', { services, volunteers, headers: adminHeaders() }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.text).toContain('Removing Debbie Adler-Klein');
+    expect(body.actions).toEqual([{ action: 'remove_signup', svcId: 'svc-sat', slotId: 'slot-sat-g' }]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
