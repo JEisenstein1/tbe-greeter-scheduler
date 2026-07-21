@@ -18,7 +18,13 @@ const ALLOWED_PATTERNS = [
   // Natural scheduling language that users/admins use without saying "schedule".
   /\b(can|could|would|will|is|are)\b.*\b(help|do|cover|take|handle|be there|make it|available)\b.*\b(friday|saturday|shabbat|service|slot|night|morning|weekend|next week)\b/i,
   /\b(who|anyone|somebody|someone)\b.*\b(can|could|available|cover|help|do|take|handle)\b.*\b(friday|saturday|shabbat|service|slot|night|morning|weekend)\b/i,
-  /\b(who|what|which|show|list|display)\b.*\b(covering|assigned|open|available|filled|unfilled|slots?|spots?|services?|volunteers?|greeters?|ushers?)\b/i,
+  /\b(who|what|which|show|list|display)\b.*\b(covering|assigned|greeting|ushering|open|available|filled|unfilled|slots?|spots?|services?|volunteers?|greeters?|ushers?)\b/i,
+  // Calendar-preview phrasing used by the guest quick chip ("What's coming up this Friday?").
+  /\b(coming up|on the calendar)\b.*\b(friday|saturday|sunday|weekend|week|month|shabbat|service|holiday)s?\b/i,
+  // Bulk-pattern requests ("Continue the Friday/Saturday pattern through the end of the year").
+  /\b(continue|extend)\b.*\b(friday|saturday|shabbat|pattern)\b/i,
+  // Removal phrasing with the volunteer name between "take" and "off" ("Take Debbie off Saturday").
+  /\btake\s+[a-z][a-z.'-]*\s+off\b/i,
   /\b(open|available|filled|unfilled)\b.*\b(slots?|spots?|services?|greeters?|ushers?)\b/i,
   /\b(do|does|did|is|are)\b.*\b(need|assigned|already|covering|covered)\b.*\b(anyone|someone|somebody|volunteers?|greeters?|ushers?|friday|saturday|weekend|service)\b/i,
   /\b(is|are)\b\s+[A-Z][a-z.'-]+\b.*\b(already|assigned|on|covering|scheduled)\b/i,
@@ -59,7 +65,8 @@ const GUEST_ROSTER_PATTERNS = [
   /\b(who('?s| is| are)|show|list|tell me)\b.*\b(volunteers?|admins?|members?)\b/i,
 ];
 
-const CONFIRMATION_RE = /^(yes|yep|yeah|confirmed?|confirm|go ahead|please do|do it|sounds good|ok|okay|approved|proceed)([,.!\s]*(confirmed?|please|thanks?)?)*$/i;
+// Accepts stacked confirmation phrases ("Yes, go ahead", "ok, do it, thanks"), not just a single one.
+const CONFIRMATION_RE = /^(?:yes|yep|yeah|confirmed?|confirm|go ahead|please do|do it|sounds good|ok|okay|approved|proceed)(?:[,.!\s]+(?:yes|yep|yeah|confirmed?|confirm|go ahead|please do|do it|sounds good|ok|okay|approved|proceed|please|thanks?))*[,.!\s]*$/i;
 
 function normalizeHistory(rawHistory) {
   if (!Array.isArray(rawHistory)) return [];
@@ -418,13 +425,13 @@ function actionIntentPermitsTools(message, actionName, history = []) {
     return /\b(add|assign|put|sign up)\b.*\b(for|to|on|friday|saturday|shabbat|service|slot|greeter|usher)\b/i.test(lower);
   }
   if (actionName === 'remove_signup') {
-    return /\b(remove|unassign|take\s+off|take me off|drop me)\b/i.test(lower);
+    return /\b(remove|unassign|take\s+off|take me off|drop me|take\s+[a-z][a-z.'-]*\s+off)\b/i.test(lower);
   }
   if (actionName === 'request_coverage') {
     return /\b(request coverage|need coverage|find (me )?(a )?substitute|need a sub|replace me)\b/i.test(lower);
   }
   if (actionName === 'create_service') {
-    return /\b(create|add|schedule|set up|continue|extend)\b.*\b(service|shabbat|havdalah|rosh hashanah|yom kippur|high holiday|pattern|year)\b/i.test(lower);
+    return /\b(create|add|schedule|set up|continue|extend)\b.*\b(service|event|party|purim|shabbat|havdalah|rosh hashanah|yom kippur|high holiday|pattern|year)\b/i.test(lower);
   }
   return false;
 }
@@ -500,8 +507,15 @@ function extractRemovalVolunteerName(message) {
   if (!name || /^(me|my|a|an|the|volunteer|greeter|usher|him|her|them)$/i.test(name)) return '';
   return name;
 }
+function isExplicitServiceCreationRequest(message) {
+  return /\b(?:add|create|schedule|set\s*up)\s+(?:(?:a|an|the)\s+)?(?:kabbalat(?:\s+shabbat)?|shabbat(?:\s+morning)?|saturday\s+morning(?:\s+shabbat)?|havdalah|rosh\s+hashanah|yom\s+kippur|high\s+holiday|service)\b/i.test(message);
+}
+
 function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [], history = []) {
   if (role !== 'admin') return null;
+  // A service type immediately after an add/create verb is an event-creation request,
+  // not a person's name. Let the create_service path handle it before consulting history.
+  if (isExplicitServiceCreationRequest(message)) return null;
   const priorText = history.slice(-4).map(h => h.content).join('\n');
   const followUpAssignment = /\b(what about|how about)\b/i.test(message) && /\b(fill|assign|schedule|add|greeters?|ushers?|slots?)\b/i.test(priorText);
   // Status/availability questions can mention a volunteer + date but are not mutation requests.
@@ -538,7 +552,7 @@ function maybeBuildAdminAssignmentAction(message, role, services, volunteers = [
 }
 function maybeBuildRemoveSignupAction(message, role, services, user, volunteers = []) {
   if (role === 'guest' || !user) return null;
-  if (!/\b(remove|unassign|take\s+off|take me off|drop me|cancel my|cancel signup|cancel)\b/i.test(message)) return null;
+  if (!/\b(remove|unassign|take\s+off|take me off|take\s+[a-z][a-z.'-]*\s+off|drop me|cancel my|cancel signup|cancel)\b/i.test(message)) return null;
   let targetUser = user;
   if (role === 'admin') {
     const requestedName = extractRemovalVolunteerName(message);

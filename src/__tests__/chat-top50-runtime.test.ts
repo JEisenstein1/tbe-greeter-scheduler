@@ -67,6 +67,26 @@ describe('top-50 RED baseline — future-date action selection', () => {
     expect(pickServiceForMessage(fridayServices, 'this Friday')?.id).toBe('this-friday');
   });
 
+  it('A-01 routes an admin service-creation prompt to create_service, not volunteer assignment', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: 'Adding Kabbalat Shabbat for Friday, July 24.', tool_calls: [{
+        function: { name: 'create_service', arguments: JSON.stringify({
+          id: 'kabbalat-shabbat-2026-07-24', dateISO: '2026-07-24', date: 'Friday, July 24',
+          time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+          slots: [{ id: 'kabbalat-shabbat-2026-07-24-s1', role: 'Greeter', timeSlot: null }],
+        }) },
+      }] } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const response = await handler(request('Add Kabbalat Shabbat for this Friday', 'admin', fridayServices, roster));
+    const body = await response.json();
+
+    expect(body.text).not.toContain('volunteer matching');
+    expect(body.actions).toHaveLength(1);
+    expect(body.actions[0]).toMatchObject({ action: 'create_service', service: { type: 'Kabbalat Shabbat', dateISO: '2026-07-24' } });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
   it('A-04 assigns an admin-selected volunteer to the upcoming Friday, never a past Friday', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const response = await handler(request('Add Dana this Friday', 'admin', fridayServices, roster));
