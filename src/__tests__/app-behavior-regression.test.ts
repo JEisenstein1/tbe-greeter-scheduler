@@ -6,6 +6,7 @@ import {
   lookupMockAuthUser,
   buildConfirmationEmail,
   getCalendarDayPrimaryAction,
+  filterSignupServices,
 } from '../appLogic';
 
 const svc = (overrides: Partial<Service> = {}): Service => ({
@@ -70,5 +71,17 @@ describe('reported app behavior regressions', () => {
     expect(getCalendarDayPrimaryAction([svc()], '2026-06-06', 'volunteer')).toEqual({ type: 'signup', serviceId: 'svc-1' });
     expect(getCalendarDayPrimaryAction([svc()], '2026-06-06', 'admin')).toEqual({ type: 'manage', serviceId: 'svc-1' });
     expect(getCalendarDayPrimaryAction([svc()], '2026-06-07', 'volunteer')).toEqual({ type: 'none' });
+  });
+
+  it('shows only current/future open or assigned services on the Sign Up screen', () => {
+    const user: User = { name: 'Jon Eisenstein', email: 'jon.eisenstein@gmail.com', role: 'volunteer', source: 'manual' };
+    const pastOpen = svc({ id: 'past-open', dateISO: '2026-07-20', slots: [{ id: 'p', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }] });
+    const pastMine = svc({ id: 'past-mine', dateISO: '2026-07-20' });
+    const todayOpen = svc({ id: 'today-open', dateISO: '2026-07-21', slots: [{ id: 't', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }] });
+    const futureMine = svc({ id: 'future-mine', dateISO: '2026-07-24' });
+    const futureFullOther = svc({ id: 'future-other', dateISO: '2026-07-25', slots: [{ id: 'o', role: 'Greeter', timeSlot: null, volunteer: 'Other Person', volunteerEmail: 'other@example.com' }] });
+
+    expect(filterSignupServices([pastOpen, pastMine, todayOpen, futureMine, futureFullOther], user, '2026-07-21').map(service => service.id))
+      .toEqual(['today-open', 'future-mine']);
   });
 });

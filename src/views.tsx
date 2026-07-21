@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { Service, Slot, User, ChatMessage, SSEEvent } from './types';
 import { VOLUNTEERS, ADMINS, SYNAGOGUE } from './data';
 import { openCount, groupSlotsByTime, fmtDate, abbrev, statusFor } from './helpers';
-import { findUserAssignments, getCalendarDayPrimaryAction, localDateISO, planAiAction } from './appLogic';
+import { filterSignupServices, findUserAssignments, getCalendarDayPrimaryAction, localDateISO, planAiAction } from './appLogic';
 import { Icon, DateBadge, ServiceCard } from './components';
 
 // ═══════════════════════════════════════════════════════════════
@@ -604,11 +604,7 @@ export function SignUpView({ services, user, onOpenAuth, onSignUp, onRequestCove
   const effectiveEmail = user ? user.email : email;
   const ready = !!effectiveName.trim() && !!effectiveEmail.trim();
 
-  const visible = services.filter(s => {
-    const hasOpen = openCount(s) > 0;
-    const mine = user && s.slots.some(sl => sl.volunteer && sl.volunteer.toLowerCase() === user.name.toLowerCase());
-    return hasOpen || mine;
-  });
+  const visible = filterSignupServices(services, user, localDateISO());
 
   return (
     <div>

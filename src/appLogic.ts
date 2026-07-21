@@ -47,6 +47,15 @@ export function isSlotForUser(slot: Slot, user: User | null, query?: string): bo
   return !!slot.volunteerEmail && slot.volunteerEmail.toLowerCase() === q;
 }
 
+export function filterSignupServices(services: Service[], user: User | null, todayISO: string): Service[] {
+  return services.filter(service => {
+    if (String(service.dateISO || '') < todayISO) return false;
+    const hasOpen = service.slots.some(slot => !slot.volunteer);
+    const mine = service.slots.some(slot => isSlotForUser(slot, user));
+    return hasOpen || mine;
+  });
+}
+
 export function findUserAssignments(services: Service[], user: User | null, todayISO: string, query?: string): { svc: Service; slot: Slot }[] {
   const submitted = user ? undefined : query?.trim();
   if (!user && !submitted) return [];
