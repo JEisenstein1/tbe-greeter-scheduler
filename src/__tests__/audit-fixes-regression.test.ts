@@ -6,6 +6,7 @@ import {
   applyRequestCoverage,
   isSlotForUser,
   findUserAssignments,
+  localDateISO,
   sameId,
 } from '../appLogic';
 import { buildShabbatServices, INITIAL_SERVICES } from '../data';
@@ -65,6 +66,17 @@ describe('signed-out My Dates lookup privacy', () => {
 
     const matches = findUserAssignments([fixtureService('svc-1')], null, '2026-01-01', 'gmail.com');
     expect(matches).toHaveLength(0);
+  });
+});
+
+describe('local calendar date handling', () => {
+  it('formats the browser-local calendar day instead of deriving it from UTC', () => {
+    const localEvening = {
+      getFullYear: () => 2026,
+      getMonth: () => 6,
+      getDate: () => 19,
+    } as Date;
+    expect(localDateISO(localEvening)).toBe('2026-07-19');
   });
 });
 

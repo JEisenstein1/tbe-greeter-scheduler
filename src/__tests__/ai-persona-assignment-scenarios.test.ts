@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import crypto from 'node:crypto';
 // @ts-expect-error api/chat.js is the Vercel Edge runtime module, intentionally plain JS.
 import handler from '../../api/chat.js';
@@ -6,6 +6,13 @@ import handler from '../../api/chat.js';
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalSessionSecret = process.env.SESSION_SECRET;
 const originalAdminEmails = process.env.ADMIN_EMAILS;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-07-01T12:00:00-04:00'));
+});
+
+afterEach(() => vi.useRealTimers());
 
 function signedSessionCookie(user: { name: string; email: string; role: string; source: string }) {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session-secret';

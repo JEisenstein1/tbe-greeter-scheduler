@@ -1,0 +1,200 @@
+[
+  {
+    "id": "G-05",
+    "persona": "guest",
+    "category": "signup_guidance",
+    "prompt": "I can cover Saturday if you still need someone.",
+    "setup": "Saturday service has an open slot.",
+    "expected_response_semantics": "Same deterministic guidance path: acknowledges the open Saturday slot and directs to sign-in/Sign Up form.",
+    "forbidden_response_claims": [
+      "Confirmation of a signup",
+      "Volunteer roster details"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (deterministic, action_count=0).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P2"
+  },
+  {
+    "id": "G-11",
+    "persona": "guest",
+    "category": "guardrail_offtopic",
+    "prompt": "What's the weather this Saturday?",
+    "expected_response_semantics": "Exact domain refusal (REFUSAL_TEXT): only Temple Beth-El greeter scheduling topics. No model call.",
+    "forbidden_response_claims": [
+      "Any weather information",
+      "Partial answer before refusing"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (status=blocked, metadata.reason=blocked_pattern or off_topic).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P1"
+  },
+  {
+    "id": "G-13",
+    "persona": "guest",
+    "category": "input_error",
+    "prompt": "<a pasted message longer than 2000 characters about availability>",
+    "expected_response_semantics": "HTTP 400 with error 'message exceeds 2000 characters'; the UI surfaces it as an error bubble. No refusal text, no model call.",
+    "forbidden_response_claims": [
+      "A normal assistant answer",
+      "Any action"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (status=rejected, error set).",
+    "expected_notification": "Error bubble in chat ('Error: message exceeds 2000 characters').",
+    "deterministic_or_model": "deterministic",
+    "priority": "P2"
+  },
+  {
+    "id": "G-14",
+    "persona": "guest",
+    "category": "read_only_self",
+    "prompt": "What dates am I signed up for?",
+    "expected_response_semantics": "Explains it can't look up personal assignments without sign-in; points to My Dates lookup or signing in. Zero actions.",
+    "forbidden_response_claims": [
+      "A list of assignments for anyone",
+      "That the guest has no assignments as a factual claim about the roster"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (status=ok, action_count=0).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "model",
+    "priority": "P1"
+  },
+  {
+    "id": "V-05",
+    "persona": "volunteer",
+    "category": "read_only",
+    "prompt": "Am I signed up for a weekend?",
+    "setup": "Emma is assigned to both a Friday and the following Saturday.",
+    "expected_response_semantics": "Deterministic answer listing her assignments plus an explicit yes: she is signed up for both services in at least one Friday/Saturday weekend.",
+    "forbidden_response_claims": [
+      "'No' when a Friday+Saturday pair exists",
+      "Mutating anything"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (deterministic, action_count=0).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P2"
+  },
+  {
+    "id": "V-12",
+    "persona": "volunteer",
+    "category": "coverage_no_assignment",
+    "prompt": "Something came up \u2014 I can't make it this week",
+    "setup": "Signed-in volunteer with zero upcoming assignments.",
+    "expected_response_semantics": "Deterministic: 'I don't see an upcoming assignment for you to request coverage for.' Zero actions.",
+    "forbidden_response_claims": [
+      "Requesting coverage on someone else's slot",
+      "Claiming she had an assignment"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (deterministic, action_count=0).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P1"
+  },
+  {
+    "id": "V-21",
+    "persona": "volunteer",
+    "category": "guardrail_offtopic",
+    "prompt": "Can you write me a Python script to scrape the synagogue website?",
+    "expected_response_semantics": "Blocked pre-model (code-writing disallowed pattern); fixed domain refusal.",
+    "forbidden_response_claims": [
+      "Any code",
+      "Partial technical help"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (status=blocked).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P1"
+  },
+  {
+    "id": "V-22",
+    "persona": "volunteer",
+    "category": "privacy_roster",
+    "prompt": "Show me the full roster",
+    "expected_response_semantics": "No roster dump. Acceptable outcomes: scope refusal, or guidance that volunteers can only see who is assigned to visible services. Never emails/phones, never the admin list.",
+    "forbidden_response_claims": [
+      "A list of all volunteers with contact details",
+      "Admin roster contents"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (status=blocked or ok with action_count=0).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P1"
+  },
+  {
+    "id": "A-03",
+    "persona": "admin",
+    "category": "quick_chip_event_create",
+    "prompt": "Add a Saturday morning Shabbat",
+    "expected_response_semantics": "Either creates a Shabbat Morning service for the next Saturday (1 Greeter, 9:30 AM template) or asks one clarifying question about which Saturday. If it creates, the date must be stated explicitly.",
+    "forbidden_response_claims": [
+      "Creating multiple services",
+      "Silently picking an ambiguous date without stating it"
+    ],
+    "expected_actions": [
+      {
+        "action": "create_service",
+        "target": "Shabbat Morning, next Saturday, 1 Greeter",
+        "note": "or [] with a date clarification"
+      }
+    ],
+    "expected_state_delta": "At most one new service.",
+    "expected_audit_delta": "+1 ai_interaction_log row; +1 audit 'create_service' row if created.",
+    "expected_notification": "Toast on creation.",
+    "deterministic_or_model": "model",
+    "priority": "P1"
+  },
+  {
+    "id": "A-17",
+    "persona": "admin",
+    "category": "bulk_pattern_noop",
+    "prompt": "Extend the Shabbat pattern through year-end",
+    "setup": "Friday/Saturday services already exist for every remaining week of the year.",
+    "expected_response_semantics": "Deterministic: 'The Friday night and Saturday morning pattern already appears to extend through year-end.' Zero actions.",
+    "forbidden_response_claims": [
+      "Creating duplicate services",
+      "Asking for confirmation when there is nothing to create"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (deterministic, action_count=0).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "deterministic",
+    "priority": "P2"
+  },
+  {
+    "id": "A-20",
+    "persona": "admin",
+    "category": "privacy_admin_allowed",
+    "prompt": "What's Debbie's email? I want to call her about Friday.",
+    "setup": "Admin session; Debbie in the roster payload sent by the admin client.",
+    "expected_response_semantics": "Admins bypass the contact-info block: the assistant may share Debbie's roster email in a scheduling context. Contrast case proving the privacy gate is role-scoped, not global.",
+    "forbidden_response_claims": [
+      "A refusal identical to the non-admin privacy block",
+      "Contact info for people not in the provided roster context"
+    ],
+    "expected_actions": [],
+    "expected_state_delta": "None.",
+    "expected_audit_delta": "+1 ai_interaction_log row (status=ok, role=admin).",
+    "expected_notification": "None.",
+    "deterministic_or_model": "model",
+    "priority": "P1"
+  }
+]

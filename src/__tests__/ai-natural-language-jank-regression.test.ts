@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import crypto from 'node:crypto';
 // @ts-expect-error api/chat.js is the Vercel Edge runtime module, intentionally plain JS.
 import handler from '../../api/chat.js';
@@ -6,6 +6,11 @@ import handler from '../../api/chat.js';
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalSessionSecret = process.env.SESSION_SECRET;
 const originalAdminEmails = process.env.ADMIN_EMAILS;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-07-01T12:00:00-04:00'));
+});
 
 const adminUser = { name: 'Jon Eisenstein', email: 'jon.eisenstein@gmail.com', role: 'admin', source: 'google' };
 const volunteerUser = { name: 'Emma Adler', email: 'emma.p.adler@gmail.com', role: 'volunteer', source: 'google' };
@@ -68,6 +73,7 @@ afterEach(() => {
   if (originalAdminEmails === undefined) delete process.env.ADMIN_EMAILS;
   else process.env.ADMIN_EMAILS = originalAdminEmails;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe('AI natural-language scheduling jank regressions', () => {

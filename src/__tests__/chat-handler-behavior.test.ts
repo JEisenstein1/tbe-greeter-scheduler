@@ -16,9 +16,9 @@ function request(message: string, role: 'admin' | 'volunteer' = 'volunteer', ext
   });
 }
 
-function signedSessionCookie(user: { name: string; email: string; role: string; source: string }) {
+function signedSessionCookie(user: { name: string; email: string; role: string; source: string }, iat = Date.now()) {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session-secret';
-  const payload = Buffer.from(JSON.stringify({ user, iat: Date.now() }), 'utf8').toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ user, iat }), 'utf8').toString('base64url');
   const sig = crypto.createHmac('sha256', process.env.SESSION_SECRET).update(payload).digest('base64url');
   return `tbe_session=${encodeURIComponent(`${payload}.${sig}`)}`;
 }
@@ -110,7 +110,7 @@ describe('chat handler guard behavior', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: {
         content: 'Confirmed — I created the service.',
-        tool_calls: [{ function: { name: 'create_service', arguments: JSON.stringify({ id: 'svc-20260703', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Friday Evening', isHH: false, slots: [] }) } }],
+        tool_calls: [{ function: { name: 'create_service', arguments: JSON.stringify({ id: 'svc-20260703', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Friday Evening', isHH: false, slots: [] }) } }],
       } }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
@@ -132,7 +132,7 @@ describe('chat handler guard behavior', () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const services = [{
-      id: 'svc-1', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      id: 'svc-1', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
       slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: 'Private Person', volunteerEmail: 'private@example.com' }],
     }];
 
@@ -145,23 +145,46 @@ describe('chat handler guard behavior', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('treats an expired signed admin cookie as a guest on the chat endpoint', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    process.env.ADMIN_EMAILS = 'admin@example.com';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const expiredCookie = signedSessionCookie(
+      { name: 'Admin User', email: 'admin@example.com', role: 'admin', source: 'google' },
+      Date.now() - (8 * 60 * 60 * 1000) - 1,
+    );
+    const services = [{
+      id: 'svc-1', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: 'Private Person', volunteerEmail: 'private@example.com' }],
+    }];
+
+    const res = await handler(request('Who is signed up to greet this Friday?', 'admin', {
+      services,
+      headers: { Cookie: expiredCookie },
+    }));
+    const body = await res.json();
+
+    expect(body.text).toContain('can’t share roster');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('answers my-schedule questions using the signed session user, not another visible volunteer', async () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     process.env.ADMIN_EMAILS = 'jon@example.com';
     const headers = { Cookie: signedSessionCookie({ name: 'Jon Eisenstein', email: 'jon@example.com', role: 'admin', source: 'google' }) };
     const services = [
-      { id: 'fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] },
-      { id: 'sat', dateISO: '2026-07-04', date: 'Saturday, July 4', time: '9:30 AM', type: 'Shabbat Morning', isHH: false, slots: [{ id: 's1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] },
-      { id: 'debbie', dateISO: '2026-07-10', date: 'Friday, July 10', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'd1', role: 'Greeter', timeSlot: null, volunteer: 'Debbie Adler-Klein', volunteerEmail: 'dakmd75@gmail.com' }] },
+      { id: 'fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] },
+      { id: 'sat', dateISO: '2026-07-25', date: 'Saturday, July 25', time: '9:30 AM', type: 'Shabbat Morning', isHH: false, slots: [{ id: 's1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] },
+      { id: 'debbie', dateISO: '2026-07-31', date: 'Friday, July 31', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'd1', role: 'Greeter', timeSlot: null, volunteer: 'Debbie Adler-Klein', volunteerEmail: 'dakmd75@gmail.com' }] },
     ];
 
     const res = await handler(request('am I signed up for a weekend?', 'admin', { services, headers, user: { name: 'Wrong Client User', email: 'wrong@example.com' } }));
     const body = await res.json();
 
     expect(body.text).toContain('Jon Eisenstein');
-    expect(body.text).toContain('Friday, July 3');
-    expect(body.text).toContain('Saturday, July 4');
+    expect(body.text).toContain('Friday, July 24');
+    expect(body.text).toContain('Saturday, July 25');
     expect(body.text).not.toContain('Debbie Adler-Klein');
     expect(body.actions).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -172,13 +195,13 @@ describe('chat handler guard behavior', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     process.env.ADMIN_EMAILS = 'jon@example.com';
     const headers = { Cookie: signedSessionCookie({ name: 'Jon Eisenstein', email: 'jon@example.com', role: 'admin', source: 'google' }) };
-    const services = [{ id: 'fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] }];
+    const services = [{ id: 'fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false, slots: [{ id: 'f1', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon@example.com' }] }];
 
     const res = await handler(request('what services am I sign up for (not Debbie)', 'admin', { services, volunteers: [{ name: 'Debbie Adler-Klein', email: 'dakmd75@gmail.com', active: true }], headers }));
     const body = await res.json();
 
     expect(body.text).toContain('Jon Eisenstein');
-    expect(body.text).toContain('Friday, July 3');
+    expect(body.text).toContain('Friday, July 24');
     expect(body.text).not.toContain('matching “for”');
     expect(body.actions).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -190,7 +213,7 @@ describe('chat handler guard behavior', () => {
       choices: [{ message: { content: 'Private Person is assigned to greet this Friday.', tool_calls: [] } }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const services = [{
-      id: 'svc-1', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      id: 'svc-1', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
       slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: 'Private Person', volunteerEmail: 'private@example.com' }],
     }];
 
@@ -220,11 +243,11 @@ describe('chat handler guard behavior', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const services = [
       {
-        id: 'svc-this-fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+        id: 'svc-this-fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
         slots: [{ id: 'slot-full', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon.eisenstein@gmail.com' }],
       },
       {
-        id: 'svc-next-fri', dateISO: '2026-07-10', date: 'Friday, July 10', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+        id: 'svc-next-fri', dateISO: '2026-07-31', date: 'Friday, July 31', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
         slots: [{ id: 'slot-open', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }],
       },
     ];
@@ -244,11 +267,11 @@ describe('chat handler guard behavior', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const services = [
       {
-        id: 'svc-this-fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+        id: 'svc-this-fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
         slots: [{ id: 'slot-full', role: 'Greeter', timeSlot: null, volunteer: 'Jon Eisenstein', volunteerEmail: 'jon.eisenstein@gmail.com' }],
       },
       {
-        id: 'svc-next-fri', dateISO: '2026-07-10', date: 'Friday, July 10', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+        id: 'svc-next-fri', dateISO: '2026-07-31', date: 'Friday, July 31', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
         slots: [{ id: 'slot-open', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }],
       },
     ];
@@ -269,7 +292,7 @@ describe('chat handler guard behavior', () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const services = [{
-      id: 'svc-fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      id: 'svc-fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
       slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }],
     }];
     const volunteers = [{ name: 'Debbie Adler-Klein', email: 'dakmd75@gmail.com', active: true }];
@@ -287,7 +310,7 @@ describe('chat handler guard behavior', () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const services = [{
-      id: 'svc-fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      id: 'svc-fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
       slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: null, volunteerEmail: null }],
     }];
     const volunteers = [
@@ -307,7 +330,7 @@ describe('chat handler guard behavior', () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const services = [{
-      id: 'svc-fri', dateISO: '2026-07-03', date: 'Friday, July 3', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
+      id: 'svc-fri', dateISO: '2026-07-24', date: 'Friday, July 24', time: '6:30 PM', type: 'Kabbalat Shabbat', isHH: false,
       slots: [{ id: 'slot-1', role: 'Greeter', timeSlot: null, volunteer: 'Volunteer User', volunteerEmail: 'volunteer@example.com' }],
     }];
 

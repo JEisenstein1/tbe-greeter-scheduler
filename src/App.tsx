@@ -152,7 +152,8 @@ export default function App() {
 
   const onAssign = (svc: Service, slot: import('./types').Slot) => setAssignTarget({ svc, slot });
   const onRemove = async (svcId: string | number, slotId: string) => {
-    try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
+    try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); }
+    catch { pushToast('Could not remove the volunteer. Nothing changed.'); return; }
     setServices(prev => applyRemoveSignup(prev, svcId, slotId));
     pushToast('Volunteer removed');
   };
@@ -168,7 +169,8 @@ export default function App() {
         refreshServices();
         return;
       }
-      /* allow fixture/demo mode */
+      pushToast('Could not save the assignment. Nothing changed.');
+      return;
     }
     setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
     setAssignTarget(null);
@@ -193,7 +195,8 @@ export default function App() {
         refreshServices();
         return;
       }
-      /* allow fixture/demo mode */
+      pushToast('Could not save your signup. Nothing changed.');
+      return;
     }
     setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
     setSignupTarget(null);
@@ -221,7 +224,8 @@ export default function App() {
 
   const handleSaveEvent = async (svc: Service) => {
     const isEdit = services.some(s => s.id === svc.id);
-    try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); } catch { /* allow fixture/demo mode */ }
+    try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); }
+    catch { pushToast(`Could not ${isEdit ? 'update' : 'add'} the service. Nothing changed.`); return; }
     setServices(prev => {
       if (isEdit) return prev.map(s => s.id === svc.id ? svc : s);
       return [...prev, svc].sort((a, b) => a.dateISO.localeCompare(b.dateISO));
@@ -231,19 +235,22 @@ export default function App() {
   };
   const handleConfirmDelete = async () => {
     const svc = eventDelete!;
-    try { await apiJson('/api/services/delete', { method: 'POST', body: JSON.stringify({ serviceId: svc.id }) }); } catch { /* allow fixture/demo mode */ }
+    try { await apiJson('/api/services/delete', { method: 'POST', body: JSON.stringify({ serviceId: svc.id }) }); }
+    catch { pushToast('Could not remove the service. Nothing changed.'); return; }
     setServices(prev => prev.filter(s => svc.id !== s.id));
     setEventDelete(null);
     pushToast(`${svc.type} removed`);
   };
 
   const onRequestCoverage = async (svcId: string | number, slotId: string) => {
-    try { await apiJson('/api/services/request-coverage', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
+    try { await apiJson('/api/services/request-coverage', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); }
+    catch { pushToast('Could not request coverage. Nothing changed.'); return; }
     setServices(prev => applyRequestCoverage(prev, svcId, slotId));
     pushToast('Coverage requested — we\'ll find a substitute');
   };
   const onSelfRemove = async (svcId: string | number, slotId: string) => {
-    try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); } catch { /* allow fixture/demo mode */ }
+    try { await apiJson('/api/services/remove', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId }) }); }
+    catch { pushToast('Could not remove your commitment. Nothing changed.'); return; }
     setServices(prev => applyRemoveSignup(prev, svcId, slotId));
     pushToast('Commitment removed');
   };
@@ -257,22 +264,29 @@ export default function App() {
 
   const onAIVolunteerSignup = async (svcId: string | number, slotId: string, vol: { name: string; email: string }) => {
     let delivery = 'confirmation prepared';
+    let confirmationSent = false;
     try {
       const out = await apiJson<{ delivery?: { status?: string } }>('/api/services/signup', { method: 'POST', body: JSON.stringify({ serviceId: svcId, slotId, name: vol.name, email: vol.email }) });
-      if (out.delivery?.status === 'sent') delivery = `confirmation sent to ${vol.email}`;
+      if (out.delivery?.status === 'sent') {
+        confirmationSent = true;
+        delivery = `confirmation sent to ${vol.email}`;
+      }
     } catch (err) {
       if (apiStatus(err) === 409) {
         pushToast('That slot was just filled by someone else');
         refreshServices();
-        return;
+        return { assigned: false, confirmationSent: false };
       }
-      /* allow fixture/demo mode */
+      pushToast('Could not save the signup. Nothing changed.');
+      return { assigned: false, confirmationSent: false };
     }
     setServices(prev => applyAssignVolunteer(prev, svcId, slotId, vol));
     pushToast(`Signed up — ${delivery}`);
+    return { assigned: true, confirmationSent };
   };
   const onAICreateService = async (svc: Service) => {
-    try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); } catch { /* allow fixture/demo mode */ }
+    try { await apiJson('/api/services/create', { method: 'POST', body: JSON.stringify({ service: svc }) }); }
+    catch { pushToast('Could not add the service. Nothing changed.'); return; }
     setServices(prev => [...prev, svc].sort((a, b) => a.dateISO.localeCompare(b.dateISO)));
     pushToast(`${svc.type} added to calendar`);
   };

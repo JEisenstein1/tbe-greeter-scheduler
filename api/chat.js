@@ -84,12 +84,6 @@ function base64urlToBytes(value) {
   return Uint8Array.from(binary, ch => ch.charCodeAt(0));
 }
 
-function bytesToBase64url(bytes) {
-  let binary = '';
-  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
 function roleForEmail(email) {
   const admins = (process.env.ADMIN_EMAILS || 'jon.eisenstein@gmail.com')
     .split(',')
@@ -99,17 +93,23 @@ function roleForEmail(email) {
 }
 
 async function verifySessionFromRequest(req) {
-  const cookie = parseCookieHeader(req.headers?.get?.('cookie') || '')[COOKIE_NAME];
-  if (!cookie || !process.env.SESSION_SECRET) return null;
-  const [payload, signature] = cookie.split('.');
-  if (!payload || !signature) return null;
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(process.env.SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const expected = bytesToBase64url(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)));
-  if (signature !== expected) return null;
-  const parsed = JSON.parse(new TextDecoder().decode(base64urlToBytes(payload)));
-  const user = parsed.user || null;
-  if (!user?.email) return null;
-  return { ...user, role: roleForEmail(user.email) };
+  try {
+    const cookie = parseCookieHeader(req.headers?.get?.('cookie') || '')[COOKIE_NAME];
+    if (!cookie || !process.env.SESSION_SECRET) return null;
+    const [payload, signature] = cookie.split('.');
+    if (!payload || !signature) return null;
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(process.env.SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    const valid = await crypto.subtle.verify('HMAC', key, base64urlToBytes(signature), new TextEncoder().encode(payload));
+    if (!valid) return null;
+    const parsed = JSON.parse(new TextDecoder().decode(base64urlToBytes(payload)));
+    const maxAgeMs = 8 * 60 * 60 * 1000;
+    if (!Number.isFinite(parsed.iat) || parsed.iat > Date.now() || Date.now() - parsed.iat > maxAgeMs) return null;
+    const user = parsed.user || null;
+    if (!user?.email) return null;
+    return { ...user, role: roleForEmail(user.email) };
+  } catch {
+    return null;
+  }
 }
 
 function isPrivateRosterRequest(message, role) {
@@ -239,7 +239,7 @@ function classifyMessageScope(message, history = []) {
   return { allowed: false, reason: 'off_topic' };
 }
 
-export { classifyMessageScope };
+export { classifyMessageScope, congregationTodayISO, isUpcomingService, serviceMatchesWhen, pickServiceForMessage, userAssignedSlots };
 
 function redactServicesForRole(services = [], user, role) {
   return services.map(s => ({
@@ -269,8 +269,24 @@ function redactServicesForRole(services = [], user, role) {
   }));
 }
 
+function congregationTodayISO(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function isUpcomingService(service, todayISO = congregationTodayISO()) {
+  return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(service?.dateISO || ''))
+    && String(service.dateISO) >= todayISO;
+}
+
 function buildSystemPrompt(role, user, services = []) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = congregationTodayISO();
   const svcLines = services.map(s => {
     const slots = Array.isArray(s.slots) ? s.slots : [];
     const slotSummary = slots.map(sl =>
@@ -433,6 +449,7 @@ function serviceMatchesWhen(svc, message) {
 }
 function pickServiceForMessage(services, message) {
   const matches = services
+    .filter(service => isUpcomingService(service))
     .filter(s => serviceMatchesWhen(s, message))
     .sort((a, b) => String(a.dateISO || '').localeCompare(String(b.dateISO || '')));
   if (!matches.length) return null;
@@ -549,7 +566,9 @@ function maybeBuildRemoveSignupAction(message, role, services, user, volunteers 
 }
 function userAssignedSlots(services, user) {
   if (!user?.email && !user?.name) return [];
-  return services.flatMap(svc => (Array.isArray(svc.slots) ? svc.slots : [])
+  return services
+    .filter(service => isUpcomingService(service))
+    .flatMap(svc => (Array.isArray(svc.slots) ? svc.slots : [])
     .filter(slot => {
       const emailMatch = user.email && slot.volunteerEmail && String(slot.volunteerEmail).toLowerCase() === String(user.email).toLowerCase();
       const nameMatch = user.name && slot.volunteer && norm(slot.volunteer) === norm(user.name);

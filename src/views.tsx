@@ -2,17 +2,22 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { Service, Slot, User, ChatMessage, SSEEvent } from './types';
 import { VOLUNTEERS, ADMINS, SYNAGOGUE } from './data';
 import { openCount, groupSlotsByTime, fmtDate, abbrev, statusFor } from './helpers';
-import { findUserAssignments, getCalendarDayPrimaryAction, planAiAction } from './appLogic';
+import { findUserAssignments, getCalendarDayPrimaryAction, localDateISO, planAiAction } from './appLogic';
 import { Icon, DateBadge, ServiceCard } from './components';
 
 // ═══════════════════════════════════════════════════════════════
 // AI Scheduler
 // ═══════════════════════════════════════════════════════════════
 
+interface AISignupResult {
+  assigned: boolean;
+  confirmationSent: boolean;
+}
+
 interface AIViewProps {
   user: User | null;
   services: Service[];
-  onAIVolunteerSignup: (svcId: string | number, slotId: string, vol: { name: string; email: string }) => void;
+  onAIVolunteerSignup: (svcId: string | number, slotId: string, vol: { name: string; email: string }) => Promise<AISignupResult>;
   onAIRemoveSignup: (svcId: string | number, slotId: string) => void;
   onAIRequestCoverage: (svcId: string | number, slotId: string) => void;
   onAICreateService: (svc: Service) => void | Promise<void>;
@@ -150,14 +155,17 @@ export function AIView({ user, services, onAIVolunteerSignup, onAIRemoveSignup, 
         const plan = planAiAction(act, user);
         if (!plan) continue;
         if (plan.kind === 'signup') {
-          onAIVolunteerSignup(plan.svcId, plan.slotId, plan.vol);
+          const result = await onAIVolunteerSignup(plan.svcId, plan.slotId, plan.vol);
           const svc = services.find(s => String(s.id) === String(plan.svcId));
           const slot = svc?.slots.find(sl => sl.id === plan.slotId);
-          if (svc && slot) {
-            const whoRow: [string, string] = act.action === 'sign_me_up'
-              ? ['You', `${plan.vol.name} · ${plan.vol.email}`]
-              : ['Volunteer', `${plan.vol.name} · ${plan.vol.email}`];
-            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], whoRow, ['', '✓ Confirmation sent']] };
+          if (result.assigned && svc && slot) {
+            const whoRow: [string, string] = effectiveRole === 'admin'
+              ? ['Volunteer', `${plan.vol.name} · ${plan.vol.email}`]
+              : ['Volunteer', plan.vol.name];
+            const confirmationRow: [string, string] = result.confirmationSent
+              ? ['Confirmation', `Sent to ${plan.vol.email}`]
+              : ['Confirmation', 'Assignment saved; email not confirmed'];
+            finalCard = { title: svc.type, rows: [['When', `${svc.date} · ${svc.time}`], ['Role', slot.role], whoRow, confirmationRow] };
           }
         } else if (plan.kind === 'remove') {
           onAIRemoveSignup(plan.svcId, plan.slotId);
@@ -316,7 +324,7 @@ export function CalendarView({ services, defaultView, user, onOpenAuth, onAssign
   const [showPast, setShowPast] = useState(false);
   useEffect(() => { setMode(defaultView || 'list'); }, [defaultView]);
 
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = localDateISO();
   const { pastServices, upcomingServices } = useMemo(() => {
     const sorted = [...services].sort((a, b) => String(a.dateISO).localeCompare(String(b.dateISO)));
     return {
@@ -420,7 +428,7 @@ function GridCalendar({ services, user, onOpenAuth, onAssign, onRemove, onSignUp
   const [month, setMonth] = useState(now.getMonth());
   const [selected, setSelected] = useState<string | null>(null);
 
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = localDateISO();
 
   const first = new Date(year, month, 1);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -686,20 +694,10 @@ interface MyDatesViewProps {
 }
 
 export function MyDatesView({ services, user, onOpenAuth, onRequestCoverage, onSelfRemove }: MyDatesViewProps) {
-  const [query, setQuery] = useState(user?.name || '');
-  const [submitted, setSubmitted] = useState(user?.name || '');
-
-  useEffect(() => {
-    if (user) { setQuery(user.name); setSubmitted(user.name); }
-  }, [user?.name]);
-
-  const lookup = () => setSubmitted(query.trim());
-
   const matches = useMemo(() => {
-    const todayISO = new Date().toISOString().slice(0, 10);
-    if (!user && !submitted) return null;
-    return findUserAssignments(services, user, todayISO, submitted);
-  }, [submitted, services, user]);
+    if (!user) return null;
+    return findUserAssignments(services, user, localDateISO());
+  }, [services, user]);
 
   return (
     <div>
@@ -720,42 +718,30 @@ export function MyDatesView({ services, user, onOpenAuth, onRequestCoverage, onS
           <button className="swap" onClick={onOpenAuth}>Switch</button>
         </div>
       ) : (
-        <>
-          <div className="signin-prompt">
-            <Icon name="user" size={16} />
-            <span><strong>Sign in</strong> to see your dates automatically.</span>
-            <button onClick={onOpenAuth}>Sign in</button>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input type="text" placeholder="Or enter your name…"
-                   value={query} onChange={e => setQuery(e.target.value)}
-                   onKeyDown={e => e.key === 'Enter' && lookup()}
-                   style={{ flex: 1, padding: '11px 14px', background: 'var(--c-card)', border: '1px solid var(--c-line)', borderRadius: 'var(--r-md)', outline: 'none', fontSize: 14 }} />
-            <button className="btn primary" onClick={lookup}>
-              <Icon name="search" size={14} /> Look Up
-            </button>
-          </div>
-        </>
+        <div className="signin-prompt">
+          <Icon name="user" size={16} />
+          <span><strong>Sign in</strong> to view your assignments securely.</span>
+          <button onClick={onOpenAuth}>Sign in</button>
+        </div>
       )}
 
       <div style={{ marginTop: 14 }}>
         {matches === null && (
           <div className="empty">
             <div className="glyph">✦</div>
-            Enter your name and tap Look Up.
+            Sign in to view your upcoming assignments.
           </div>
         )}
         {matches !== null && matches.length === 0 && (
           <div className="empty">
             <div className="glyph">·</div>
-            No upcoming assignments {user ? 'yet' : `found for "${submitted}"`}. Head to Sign Up to volunteer.
+            No upcoming assignments yet. Head to Sign Up to volunteer.
           </div>
         )}
         {matches !== null && matches.length > 0 && (
           <>
             <div className="results-pill" style={{ marginBottom: 10 }}>
               <strong>{matches.length}</strong> upcoming assignment{matches.length === 1 ? '' : 's'}
-              {!user && ` for ${submitted}`}
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
               {matches.map(({ svc, slot }, i) => (
@@ -1045,7 +1031,7 @@ export function VolunteersView({ onBack }: { onBack: () => void }) {
 
   const addOne = () => {
     if (!newName.trim() || !newEmail.trim()) return;
-    setVolunteers(v => [...v, { name: newName.trim(), email: newEmail.trim(), active: true, joined: new Date().toISOString().slice(0, 10), servedCount: 0 }]);
+    setVolunteers(v => [...v, { name: newName.trim(), email: newEmail.trim(), active: true, joined: localDateISO(), servedCount: 0 }]);
     setNewName(''); setNewEmail(''); setAdding(false);
   };
 
@@ -1128,7 +1114,7 @@ export function AdminsView({ onBack }: { onBack: () => void }) {
 
   const add = () => {
     if (!newName.trim() || !newEmail.trim()) return;
-    setAdmins(a => [...a, { name: newName.trim(), email: newEmail.trim(), role: 'Admin', joined: new Date().toISOString().slice(0, 10), source: 'invited' }]);
+    setAdmins(a => [...a, { name: newName.trim(), email: newEmail.trim(), role: 'Admin', joined: localDateISO(), source: 'invited' }]);
     setNewName(''); setNewEmail(''); setAdding(false);
   };
   const remove = (email: string) => setAdmins(a => a.filter(x => x.email !== email));
