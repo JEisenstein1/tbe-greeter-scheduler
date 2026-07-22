@@ -402,7 +402,7 @@ function parseToolArguments(args) {
 function sanitizeAssistantText(value) {
   return String(value || '')
     .split(/\r?\n/)
-    .filter(line => !/\b(?:svcId|slotId)\s*:/i.test(line))
+    .filter(line => !/\b(?:svcId|slotId|service\s+ID|slot\s+ID)\s*:/i.test(line))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

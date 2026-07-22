@@ -93,7 +93,7 @@ describe('chat handler guard behavior', () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: {
-        content: 'This Friday has an open Greeter slot.\n- svcId: `kabbalat-shabbat-2026-07-24`\n- slotId: `kabbalat-shabbat-2026-07-24-s1`\nPlease sign in to help.',
+        content: 'This Friday has an open Greeter slot.\n- svcId: `kabbalat-shabbat-2026-07-24`\n- slotId: `kabbalat-shabbat-2026-07-24-s1`\nService ID: kabbalat-shabbat-2026-07-24\nSlot ID: kabbalat-shabbat-2026-07-24-s1\nPlease sign in to help.',
         tool_calls: [],
       } }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -103,7 +103,7 @@ describe('chat handler guard behavior', () => {
 
     expect(body.text).toContain('open Greeter slot');
     expect(body.text).toContain('Please sign in');
-    expect(body.text).not.toMatch(/svcId|slotId|kabbalat-shabbat-2026-07-24-s1/i);
+    expect(body.text).not.toMatch(/svcId|slotId|service\s+ID|slot\s+ID|kabbalat-shabbat-2026-07-24-s1/i);
   });
 
   it('drops model tool calls when the user phrased an ambiguous question instead of an explicit action', async () => {
